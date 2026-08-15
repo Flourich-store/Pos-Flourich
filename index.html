@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Flourich POS</title>
     
-    <!-- Ikon Favicon Logo Flourich -->
+    <!-- Ikon Favicon Logo -->
     <link rel="icon" type="image/png" href="https://raw.githubusercontent.com/Flourich-store/Pos-Flourich/main/flourich_logo.png">
 
     <style>
@@ -13,8 +13,51 @@
             margin: 0; 
             padding: 0; 
             height: 100%; 
-            overflow: hidden; /* Mencegah scroll ganda */
+            overflow: hidden; 
+            font-family: Arial, sans-serif;
+            background-color: #f9f9f9;
         }
+
+        /* Styling untuk Kotak Loading */
+        #loading {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background-color: #ffffff;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 999;
+            transition: opacity 0.5s ease;
+        }
+
+        /* Animasi Lingkaran Berputar (Spinner) */
+        .spinner {
+            width: 50px;
+            height: 50px;
+            border: 5px solid #f3f3f3;
+            border-top: 5px solid #198754; /* Warna hijau selaras dengan tema toko */
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-bottom: 15px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .loading-text {
+            color: #555;
+            font-size: 14px;
+            font-weight: 500;
+            letter-spacing: 0.5px;
+        }
+
+        /* Styling Iframe */
         iframe {
             width: 100vw; 
             height: 100vh; 
@@ -24,7 +67,26 @@
     </style>
 </head>
 <body>
-    <!-- Ganti URL_GAS_ANDA di bawah ini dengan link Web App Google Apps Script Anda -->
-    <iframe src="https://script.google.com/macros/s/AKfycbzNNhSQCDyaxcZ5m1_2oiPrbyUOctjthaBW7HKOYk2L6ngDIi95FEQSgED2XmBAaOihOg/exec"></iframe>
+
+    <!-- Elemen Loading Spinner -->
+    <div id="loading">
+        <div class="spinner"></div>
+        <div class="loading-text">Memuat Sistem Flourich POS...</div>
+    </div>
+
+    <!-- Ganti URL_GAS_ANDA dengan link Google Apps Script Anda -->
+    <iframe src="https://script.google.com/macros/s/AKfycbzNNhSQCDyaxcZ5m1_2oiPrbyUOctjthaBW7HKOYk2L6ngDIi95FEQSgED2XmBAaOihOg/exec" onload="hideLoading()"></iframe>
+
+    <script>
+        // Fungsi otomatis menghilangkan animasi loading saat iframe selesai dimuat
+        function hideLoading() {
+            const loader = document.getElementById('loading');
+            loader.style.opacity = '0';
+            setTimeout(function() {
+                loader.style.display = 'none';
+            }, 500); // Memberikan efek transisi pudar (fade-out) yang halus
+        }
+    </script>
+
 </body>
 </html>
