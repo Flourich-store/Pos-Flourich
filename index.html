@@ -15,6 +15,47 @@
             padding: 0;
             height: 100%;
             overflow: hidden; /* Mencegah scroll ganda di body */
+            font-family: Arial, sans-serif;
+            background-color: #f9f9f9;
+        }
+
+        /* Styling untuk Kotak Loading */
+        #loading {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background-color: #ffffff;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 999;
+            transition: opacity 0.5s ease;
+        }
+
+        /* Animasi Lingkaran Berputar (Spinner) */
+        .spinner {
+            width: 50px;
+            height: 50px;
+            border: 5px solid #f3f3f3;
+            border-top: 5px solid #059669; /* Warna hijau selaras dengan tema POS */
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-bottom: 15px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .loading-text {
+            color: #555;
+            font-size: 14px;
+            font-weight: 500;
+            letter-spacing: 0.5px;
         }
 
         /* Container khusus untuk memaksa iframe bisa di-scroll di HP */
@@ -41,10 +82,29 @@
 </head>
 <body>
 
-    <div class="iframe-container">
-        <!-- Ganti atribut src dengan URL Google Apps Script kamu -->
-        <iframe src="https://script.google.com/macros/s/AKfycbzNNhSQCDyaxcZ5m1_2oiPrbyUOctjthaBW7HKOYk2L6ngDIi95FEQSgED2XmBAaOihOg/exec"></iframe>
+    <!-- Elemen Loading Spinner -->
+    <div id="loading">
+        <div class="spinner"></div>
+        <div class="loading-text">Memuat Sistem POS Flourich...</div>
     </div>
+
+    <div class="iframe-container">
+        <!-- URL Google Apps Script kamu dengan fungsi onload untuk menghilangkan animasi -->
+        <iframe src="https://script.google.com/macros/s/AKfycbzNNhSQCDyaxcZ5m1_2oiPrbyUOctjthaBW7HKOYk2L6ngDIi95FEQSgED2XmBAaOihOg/exec" onload="hideLoading()"></iframe>
+    </div>
+
+    <script>
+        // Fungsi otomatis menghilangkan animasi loading saat iframe selesai dimuat
+        function hideLoading() {
+            const loader = document.getElementById('loading');
+            if (loader) {
+                loader.style.opacity = '0';
+                setTimeout(function() {
+                    loader.style.display = 'none';
+                }, 500); // Efek transisi pudar (fade-out) yang halus
+            }
+        }
+    </script>
 
 </body>
 </html>
