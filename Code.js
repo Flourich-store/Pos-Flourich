@@ -18,21 +18,28 @@ function doGet(e) {
 
 function doPost(e) {
   try {
-    const requestData = JSON.parse(e.postData.contents);
-    const action = requestData.action;
-    const args = requestData.args || [];
-    
-    let result;
-    if (action === 'checkLogin') {
-      result = checkLogin(args[0], args[1]);
-    } else {
-      result = { status: false, message: "Action tidak dikenal: " + action };
+    const rawBody = e && e.postData && e.postData.contents ? e.postData.contents : '{}';
+    const requestData = JSON.parse(rawBody);
+    const action = String(requestData.action || '').trim();
+    const args = Array.isArray(requestData.args) ? requestData.args : [];
+
+    if (!action) {
+      throw new Error('Action tidak ditemukan.');
     }
-    
+
+    const backendFunction = globalThis[action];
+    if (typeof backendFunction !== 'function') {
+      throw new Error('Fungsi ' + action + ' tidak tersedia.');
+    }
+
+    const result = backendFunction.apply(null, args);
     return ContentService.createTextOutput(JSON.stringify(result))
       .setMimeType(ContentService.MimeType.JSON);
   } catch (error) {
-    return ContentService.createTextOutput(JSON.stringify({ status: false, message: error.toString() }))
+    return ContentService.createTextOutput(JSON.stringify({
+      status: 'error',
+      message: error && error.message ? error.message : String(error)
+    }))
       .setMimeType(ContentService.MimeType.JSON);
   }
 }
