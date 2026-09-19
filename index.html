@@ -1824,10 +1824,11 @@
 
     async function apiRequest(action, args = []) {
       try {
+        console.log('[POS API] request', { endpoint: API_URL, action: action });
         const response = await fetch(API_URL, {
           method: 'POST',
           headers: {
-            'Content-Type': 'application/json',
+            'Content-Type': 'text/plain;charset=utf-8',
             'Accept': 'application/json'
           },
           body: JSON.stringify({
@@ -1837,11 +1838,13 @@
         });
 
         const text = await response.text();
+        console.log('[POS API] response', { status: response.status, text: text });
         let payload = {};
 
         try {
           payload = text ? JSON.parse(text) : {};
         } catch (e) {
+          console.error('[POS API] invalid JSON response', e);
           payload = { status: 'error', message: 'Respons server tidak valid.' };
         }
 
@@ -1851,6 +1854,7 @@
 
         return payload.data !== undefined ? payload.data : payload;
       } catch (error) {
+        console.error('[POS API] fetch error', error);
         const message = error && error.message ? error.message : 'Koneksi ke server tidak tersedia.';
         throw new Error(message);
       }
