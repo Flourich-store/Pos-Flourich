@@ -351,6 +351,116 @@ function getPenjualanData() {
 }
 
 /**
+ * ============================================================
+ * getInitialData()
+ * Mengambil SELURUH data (Produk + Penjualan) dalam SATU kali
+ * eksekusi. Spreadsheet hanya dibuka satu kali.
+ * Mengurangi jumlah google.script.run dari 2 menjadi 1.
+ * ============================================================
+ */
+function getInitialData() {
+  const ss = getSpreadsheet();
+  const timezone = ss.getSpreadsheetTimeZone();
+
+  // ─── 1. PRODUK DATA (batch getValues) ───
+  const shProduk = ss.getSheetByName("Produk");
+  let produkResult = [['id', 'nama', 'stok', 'harga', 'foto_url']];
+
+  if (shProduk) {
+    const dataProduk = shProduk.getDataRange().getValues();
+
+    if (dataProduk.length > 0) {
+      // Ambil daftar foto dari Google Drive secara otomatis (satu kali)
+      const photoList = getDrivePhotoList();
+      let photoColUpdate = [["foto_url"]];
+      let needsUpdate = false;
+
+      // Pastikan header ada
+      if (dataProduk[0].length < 5) {
+        needsUpdate = true;
+      }
+
+      for (let i = 1; i < dataProduk.length; i++) {
+        const row = dataProduk[i];
+        const id = String(row[0] || '').trim();
+        const nama = String(row[1] || '').trim();
+        const stok = Number(row[2] || 0);
+        const harga = Number(row[3] || 0);
+        let fotoUrl = String(row[4] || '').trim();
+
+        // Cocokkan foto dari Google Drive berdasarkan Nama Produk
+        const matchedDriveUrl = matchPhotoForProduct(id, nama, photoList);
+        if (matchedDriveUrl) {
+          fotoUrl = matchedDriveUrl;
+          if (!row[4]) {
+            needsUpdate = true; // Tandai jika ada sel yang butuh diupdate
+          }
+        }
+
+        photoColUpdate.push([fotoUrl]);
+        produkResult.push([id, nama, stok, harga, fotoUrl]);
+      }
+
+      // Batch setValues untuk foto_url jika ada yang perlu diperbarui
+      if (needsUpdate) {
+        try {
+          shProduk.getRange(1, 5, photoColUpdate.length, 1).setValues(photoColUpdate);
+        } catch (e) { }
+      }
+    }
+  }
+
+  // ─── 2. PENJUALAN DATA (batch getValues) ───
+  const shPenjualan = ss.getSheetByName("Penjualan");
+  const penjualanHeader = ['id', 'tanggal', 'namaProduk', 'jumlah', 'totalHarga', 'metode', 'uangDibayar', 'uangKembali', 'Modal', 'biayaOperasional', 'labaBersih'];
+  let penjualanResult = [penjualanHeader];
+
+  if (shPenjualan) {
+    const lastRow = shPenjualan.getLastRow();
+
+    if (lastRow > 1) {
+      const dataJual = shPenjualan.getRange(1, 1, lastRow, 11).getValues();
+
+      penjualanResult = [];
+      penjualanResult.push(dataJual[0]);
+
+      for (let i = 1; i < dataJual.length; i++) {
+        const row = dataJual[i];
+        if (row[0] == "" || row[1] == "") continue;
+
+        let tanggal = "";
+        if (row[1] instanceof Date) {
+          tanggal = Utilities.formatDate(row[1], timezone, "dd/MM/yyyy HH:mm");
+        } else {
+          tanggal = String(row[1]);
+        }
+
+        penjualanResult.push([
+          String(row[0]),
+          tanggal,
+          String(row[2] || ""),
+          Number(row[3] || 0),
+          Number(row[4] || 0),
+          String(row[5] || ""),
+          Number(row[6] || 0),
+          Number(row[7] || 0),
+          Number(row[8] || 0),
+          Number(row[9] || 0),
+          Number(row[10] || 0)
+        ]);
+      }
+    }
+  }
+
+  // ─── 3. RETURN GABUNGAN ───
+  return {
+    produk: produkResult,
+    penjualan: penjualanResult,
+    timestamp: new Date().getTime()
+  };
+}
+
+/**
  * Checkout
  */
 function prosesCheckout(cart, metode, uangDibayar) {

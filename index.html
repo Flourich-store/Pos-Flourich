@@ -2160,10 +2160,13 @@
       }
     }
 
-    function fetchData() {
-      safeGoogleRun('getProdukData', [], data => {
+    function renderInitialData(dataObj) {
+      if (!dataObj) return;
+      
+      // --- 1. Render Produk ---
+      const data = dataObj.produk;
+      if (data) {
         masterData = data;
-
         const sel = document.getElementById('selProduk');
         const tbody = document.querySelector('#stokTable tbody');
         sel.innerHTML = '';
@@ -2211,16 +2214,43 @@
             </tr>
           `;
         }
-      }, err => {
-        console.error(err);
-      });
+      }
 
-      safeGoogleRun('getPenjualanData', [], dataJual => {
+      // --- 2. Render Penjualan ---
+      const dataJual = dataObj.penjualan;
+      if (dataJual) {
         rawPenjualanData = dataJual;
         applyFilter(false);
         toggleUangInput();
+      }
+    }
+
+    function renderFromCache() {
+      const cached = localStorage.getItem('pos_initial_data');
+      if (cached) {
+        try {
+          const parsed = JSON.parse(cached);
+          renderInitialData(parsed);
+        } catch (e) {
+          console.error("Gagal parse cache lokal:", e);
+        }
+      } else {
+        console.warn("Tidak ada data di cache lokal.");
+      }
+    }
+
+    function fetchData() {
+      // 1. Coba load dari localStorage dulu agar UI langsung tampil (caching)
+      renderFromCache();
+
+      // 2. Fetch data terbaru dari server dalam 1 kali eksekusi
+      safeGoogleRun('getInitialData', [], result => {
+        // Simpan hasil terbaru ke localStorage
+        localStorage.setItem('pos_initial_data', JSON.stringify(result));
+        // Render ulang dengan data terbaru
+        renderInitialData(result);
       }, err => {
-        console.error(err);
+        console.error("Gagal getInitialData:", err);
       });
     }
 
