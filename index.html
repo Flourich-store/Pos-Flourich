@@ -519,7 +519,7 @@
       display: block;
       background-color: #fff;
       color: var(--text-main);
-      transition: all 0.2s ease;
+      transition: border-color 0.2s ease, box-shadow 0.2s ease;
     }
 
     input:focus,
@@ -1869,8 +1869,21 @@
     let realtimeTimer = null;
     let currentPage = 1;
     let fetchDataHasError = false;
+    let isUserInteracting = false; // Flag penanda apakah user sedang berinteraksi dengan form/dropdown
     const rowsPerPage = 10;
     const isLocalMode = window.location.protocol === 'file:';
+
+    // Event listener global untuk melindungi proses input & dropdown dari refresh latar belakang
+    document.addEventListener('focusin', function(e) {
+      const tag = e.target.tagName ? e.target.tagName.toLowerCase() : '';
+      if (tag === 'select' || tag === 'input' || tag === 'textarea') {
+        isUserInteracting = true;
+      }
+    });
+
+    document.addEventListener('focusout', function(e) {
+      isUserInteracting = false;
+    });
 
     window.onload = function () {
       if (isLocalMode) {
@@ -2169,8 +2182,9 @@
         masterData = data;
         const sel = document.getElementById('selProduk');
         const tbody = document.querySelector('#stokTable tbody');
-        sel.innerHTML = '';
-        tbody.innerHTML = '';
+        
+        let selHTML = '';
+        let tbodyHTML = '';
 
         for (let i = 1; i < data.length; i++) {
           const idProd = String(data[i][0] || '');
@@ -2179,7 +2193,7 @@
           const hargaProd = Number(data[i][3] || 0);
           const rawFoto = String(data[i][4] || '').trim();
 
-          sel.innerHTML += `
+          selHTML += `
             <option value="${idProd}">${namaProd} - Rp ${hargaProd.toLocaleString('id-ID')} (Stok: ${stokProd})</option>
           `;
 
@@ -2202,7 +2216,7 @@
           const fotoUrl = formatProductImageUrl(rawFoto);
           const safeName = namaProd.replace(/'/g, "\\'");
 
-          tbody.innerHTML += `
+          tbodyHTML += `
             <tr style="cursor: pointer;" onclick="pilihProdukDariTabel('${idProd}')" title="Klik untuk memilih ${safeName}">
               <td>
                 <img src="${fotoUrl}" class="product-thumb" alt="${safeName}" title="Klik untuk lihat foto ${safeName}" onclick="event.stopPropagation(); previewProductImage('${rawFoto.replace(/'/g, "\\'")}', '${safeName}')" onerror="handleImageError(this, '${rawFoto.replace(/'/g, "\\'")}')">
@@ -2214,6 +2228,13 @@
             </tr>
           `;
         }
+
+        // Hindari menimpa isi dropdown jika user sedang membuka/mengklik dropdown (fokus)
+        // Hal ini penting untuk mencegah 'flickering' atau tertutupnya opsi di perangkat mobile
+        if (document.activeElement !== sel) {
+          sel.innerHTML = selHTML;
+        }
+        tbody.innerHTML = tbodyHTML;
       }
 
       // --- 2. Render Penjualan ---
@@ -2226,6 +2247,12 @@
     }
 
     function renderFromCache() {
+      // Pengaman: Jangan merender ulang DOM jika user sedang aktif berinteraksi 
+      // dengan input atau dropdown (mencegah flickering/tertutup paksa di mobile)
+      if (isUserInteracting) {
+        return;
+      }
+
       const cached = localStorage.getItem('pos_initial_data');
       if (cached) {
         try {
