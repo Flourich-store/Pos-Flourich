@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>POS Flourich</title>
+    
+    <!-- Script/Tag untuk menampilkan logo di tab browser -->
+    <link href="https://raw.githubusercontent.com/Flourich-store/Pos-Flourich/main/flourich_logo.png" rel="icon" type="image/png">
+    
+    <style>
+        :root {
+            --bg: #f4f7f5;
+            --panel: #ffffff;
+            --accent: #059669;
+            --accent-dark: #047857;
+            --text: #1c1c1c;
+            --muted: #667085;
+            --border: rgba(15, 23, 42, 0.08);
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        html, body {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            min-height: 100%;
+            height: 100%;
+            overflow: hidden;
+            font-family: Arial, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+        }
+
+        body {
+            overscroll-behavior: none;
+        }
+
+        #loading {
+            position: fixed;
+            inset: 0;
+            width: 100vw;
+            height: 100vh;
+            background: rgba(255, 255, 255, 0.96);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 999;
+            transition: opacity 0.45s ease, visibility 0.45s ease;
+            padding: 20px;
+            text-align: center;
+        }
+
+        .spinner {
+            width: 52px;
+            height: 52px;
+            border: 5px solid #e5e7eb;
+            border-top: 5px solid var(--accent);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-bottom: 14px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .loading-text {
+            color: var(--muted);
+            font-size: 14px;
+            font-weight: 600;
+            letter-spacing: 0.2px;
+            line-height: 1.4;
+        }
+
+        .iframe-container {
+            position: fixed;
+            inset: 0;
+            width: 100vw;
+            height: 100vh;
+            overflow: hidden;
+            background: var(--panel);
+        }
+
+        iframe {
+            width: 100%;
+            height: 100%;
+            border: none;
+            display: block;
+            background: #fff;
+        }
+
+        @media (max-width: 767px) {
+            html, body {
+                height: 100dvh;
+            }
+
+            #loading {
+                padding: 24px 18px;
+            }
+
+            .spinner {
+                width: 42px;
+                height: 42px;
+                border-width: 4px;
+            }
+
+            .loading-text {
+                font-size: 12px;
+                max-width: 220px;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Elemen Loading Spinner -->
+    <div id="loading">
+        <div class="spinner"></div>
+        <div class="loading-text">Memuat Sistem POS Flourich...</div>
+    </div>
+
+    <div class="iframe-container">
+        <!-- URL Google Apps Script kamu dengan fungsi onload untuk menghilangkan animasi -->
+        <iframe src="https://script.google.com/macros/s/AKfycbzNNhSQCDyaxcZ5m1_2oiPrbyUOctjthaBW7HKOYk2L6ngDIi95FEQSgED2XmBAaOihOg/exec" onload="hideLoading()"></iframe>
+    </div>
+
+    <script>
+        function hideLoading() {
+            const loader = document.getElementById('loading');
+            if (!loader) return;
+
+            loader.style.opacity = '0';
+            loader.style.visibility = 'hidden';
+
+            setTimeout(function() {
+                loader.style.display = 'none';
+            }, 450);
+        }
+
+        window.addEventListener('load', function() {
+            const iframe = document.querySelector('iframe');
+            if (iframe && iframe.contentWindow && iframe.contentWindow.document && iframe.contentWindow.document.readyState === 'complete') {
+                hideLoading();
+            }
+        });
+    </script>
+
+</body>
+</html>

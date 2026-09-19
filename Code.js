@@ -330,7 +330,7 @@ function getPenjualanData() {
  */
 function prosesCheckout(cart, metode, uangDibayar) {
   try {
-    if (!cart || cart.length == 0) {
+    if (!Array.isArray(cart) || cart.length === 0) {
       return { status: "error", message: "Keranjang masih kosong." };
     }
 
@@ -342,71 +342,71 @@ function prosesCheckout(cart, metode, uangDibayar) {
       return { status: "error", message: "Sheet 'Produk' atau 'Penjualan' tidak ditemukan." };
     }
 
-    let dataProduk = shProduk.getDataRange().getValues();
+    const dataProduk = shProduk.getDataRange().getValues();
     let grandTotal = 0;
     const validatedItems = [];
 
-    for (let item of cart) {
-      const jumlah = Number(item.jumlah || 0);
+    for (const item of cart) {
+      const itemId = String(item && item.id != null ? item.id : '').trim();
+      const itemNama = String(item && item.nama ? item.nama : '').trim();
+      const jumlah = Number(item && item.jumlah != null ? item.jumlah : 0);
+
+      if (!itemId) {
+        return { status: "error", message: "ID produk tidak valid." };
+      }
+
       if (!Number.isFinite(jumlah) || jumlah <= 0) {
         return { status: "error", message: "Jumlah item harus lebih dari 0." };
       }
 
-      const produk = dataProduk.find(p => String(p[0]).trim() === String(item.id).trim());
-      if (!produk) {
-        return { status: "error", message: "Produk ID " + item.id + " tidak ditemukan." };
+      const produkIndex = dataProduk.findIndex(row => String(row[0] || '').trim() === itemId);
+      if (produkIndex <= 0) {
+        return { status: "error", message: "Produk ID " + itemId + " tidak ditemukan." };
       }
 
+      const produk = dataProduk[produkIndex];
       const hargaSatuan = Number(produk[3] || 0);
       const stokTersedia = Number(produk[2] || 0);
       if (jumlah > stokTersedia) {
-        return { status: "error", message: "Stok " + item.nama + " tidak mencukupi." };
+        return { status: "error", message: "Stok " + (itemNama || produk[1] || itemId) + " tidak mencukupi." };
       }
 
       const totalHargaItem = hargaSatuan * jumlah;
       grandTotal += totalHargaItem;
 
+      const modalRaw = Number(produk[4] ?? produk[5] ?? 0);
+      const modalSatuan = Number.isFinite(modalRaw) ? modalRaw : 0;
+
       validatedItems.push({
-        id: item.id,
-        nama: item.nama,
+        id: itemId,
+        nama: itemNama || String(produk[1] || ''),
         jumlah: jumlah,
         hargaSatuan: hargaSatuan,
-        totalHarga: totalHargaItem
+        totalHarga: totalHargaItem,
+        modalSatuan: modalSatuan
       });
     }
 
-    let transaksi = "FR-" + new Date().getTime();
-    let tanggal = new Date();
+    const transaksi = "FR-" + new Date().getTime();
+    const tanggal = new Date();
     let uangKembali = 0;
+    let finalBayar = grandTotal;
 
-    if (metode == "CASH") {
-      uangDibayar = Number(uangDibayar);
-      if (!Number.isFinite(uangDibayar) || uangDibayar <= 0) {
+    if (String(metode).toUpperCase() === "CASH") {
+      finalBayar = Number(uangDibayar);
+      if (!Number.isFinite(finalBayar) || finalBayar <= 0) {
         return { status: "error", message: "Nominal pembayaran CASH tidak valid." };
       }
-      uangKembali = uangDibayar - grandTotal;
+      uangKembali = finalBayar - grandTotal;
       if (uangKembali < 0) {
         return { status: "error", message: "Uang pembayaran kurang." };
       }
-    } else {
-      uangDibayar = grandTotal;
     }
 
-    validatedItems.forEach(function(item) {
-      let infoProduk = dataProduk.find(p => String(p[0]).trim() === String(item.id).trim());
-      let modalSatuan = 0;
-      if (infoProduk && infoProduk.length > 4) {
-        const rawModal = infoProduk[4];
-        if (typeof rawModal === 'number' && !isNaN(rawModal)) {
-          modalSatuan = rawModal;
-        } else if (typeof rawModal === 'string' && !isNaN(Number(rawModal)) && rawModal.trim() !== '' && !rawModal.includes('http')) {
-          modalSatuan = Number(rawModal);
-        }
-      }
-      
-      let totalModal = modalSatuan * item.jumlah;
-      let biayaOperasional = 0;
-      let labaBersih = item.totalHarga - totalModal - biayaOperasional;
+    for (const item of validatedItems) {
+      const totalModal = item.modalSatuan * item.jumlah;
+      const biayaOperasional = 0;
+      const labaBersih = item.totalHarga - totalModal - biayaOperasional;
 
       shPenjualan.appendRow([
         transaksi,
@@ -415,34 +415,31 @@ function prosesCheckout(cart, metode, uangDibayar) {
         item.jumlah,
         item.totalHarga,
         metode,
-        uangDibayar,
+        finalBayar,
         uangKembali,
         totalModal,
         biayaOperasional,
         labaBersih
       ]);
 
-      for (let i = 1; i < dataProduk.length; i++) {
-        if (String(dataProduk[i][0]).trim() == String(item.id).trim()) {
-          let stokBaru = Number(dataProduk[i][2] || 0) - item.jumlah;
-          dataProduk[i][2] = stokBaru;
-          shProduk.getRange(i + 1, 3).setValue(stokBaru);
-          break;
-        }
+      const produkIndex = dataProduk.findIndex(row => String(row[0] || '').trim() === item.id);
+      if (produkIndex > 0) {
+        const stokBaru = Number(dataProduk[produkIndex][2] || 0) - item.jumlah;
+        dataProduk[produkIndex][2] = stokBaru;
+        shProduk.getRange(produkIndex + 1, 3).setValue(stokBaru);
       }
-    });
+    }
 
     return {
       status: "success",
       transaksi: transaksi,
       total: grandTotal,
-      bayar: uangDibayar,
+      bayar: finalBayar,
       kembali: uangKembali,
       metode: metode
     };
 
   } catch (err) {
-    // Ini akan menampilkan pesan error aslinya ke layar POS Anda
     return {
       status: "error",
       message: "Error sistem: " + err.toString()
