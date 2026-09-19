@@ -2213,7 +2213,6 @@
         }
       }, err => {
         console.error(err);
-        showFetchDataError('Gagal mengambil data produk. Periksa koneksi server atau jalankan dari URL Apps Script.');
       });
 
       safeGoogleRun('getPenjualanData', [], dataJual => {
@@ -2222,7 +2221,6 @@
         toggleUangInput();
       }, err => {
         console.error(err);
-        showFetchDataError('Gagal mengambil riwayat penjualan. Hentikan polling untuk menghindari notifikasi berulang.');
       });
     }
 
