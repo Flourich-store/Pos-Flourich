@@ -9,7 +9,7 @@
  * Penting: hindari routing page=dashboard di file POS agar login POS tidak bentrok.
  */
 function doGet(e) {
-  return HtmlService.createTemplateFromFile('Index')
+  return HtmlService.createTemplateFromFile('index')
     .evaluate()
     .setTitle('FLOU RICH - POS')
     .addMetaTag('viewport', 'width=device-width, initial-scale=1')
@@ -377,12 +377,12 @@ function prosesCheckout(cart, metode, uangDibayar) {
         return { status: "error", message: "Jumlah item harus lebih dari 0." };
       }
 
-      const produkIndex = dataProduk.findIndex(row => String(row[0] || '').trim() === itemId);
-      if (produkIndex <= 0) {
+      const produkindex = dataProduk.findindex(row => String(row[0] || '').trim() === itemId);
+      if (produkindex <= 0) {
         return { status: "error", message: "Produk ID " + itemId + " tidak ditemukan." };
       }
 
-      const produk = dataProduk[produkIndex];
+      const produk = dataProduk[produkindex];
       const hargaSatuan = Number(produk[3] || 0);
       const stokTersedia = Number(produk[2] || 0);
       if (jumlah > stokTersedia) {
@@ -440,11 +440,11 @@ function prosesCheckout(cart, metode, uangDibayar) {
         labaBersih
       ]);
 
-      const produkIndex = dataProduk.findIndex(row => String(row[0] || '').trim() === item.id);
-      if (produkIndex > 0) {
-        const stokBaru = Number(dataProduk[produkIndex][2] || 0) - item.jumlah;
-        dataProduk[produkIndex][2] = stokBaru;
-        shProduk.getRange(produkIndex + 1, 3).setValue(stokBaru);
+      const produkindex = dataProduk.findindex(row => String(row[0] || '').trim() === item.id);
+      if (produkindex > 0) {
+        const stokBaru = Number(dataProduk[produkindex][2] || 0) - item.jumlah;
+        dataProduk[produkindex][2] = stokBaru;
+        shProduk.getRange(produkindex + 1, 3).setValue(stokBaru);
       }
     }
 
@@ -653,7 +653,7 @@ function getPenjualanReport(startDate, endDate) {
 }
 
 function loadPOSPage() {
-  return HtmlService.createHtmlOutputFromFile('Index').getContent();
+  return HtmlService.createHtmlOutputFromFile('index').getContent();
 }
 
 
@@ -669,7 +669,7 @@ function loadPOSData() {
 }
 
 function getPageContent(page) {
-  if (page === 'pos') return HtmlService.createHtmlOutputFromFile('Index').getContent();
+  if (page === 'pos') return HtmlService.createHtmlOutputFromFile('index').getContent();
   return HtmlService.createHtmlOutputFromFile('Dashboard').getContent();
 }
 
