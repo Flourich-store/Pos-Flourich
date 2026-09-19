@@ -2239,19 +2239,22 @@
       }
     }
 
-    function fetchData() {
-      // 1. Coba load dari localStorage dulu agar UI langsung tampil (caching)
-      renderFromCache();
-
-      // 2. Fetch data terbaru dari server dalam 1 kali eksekusi
+    // Eksekusi API HANYA SATU KALI saat halaman selesai dimuat
+    document.addEventListener('DOMContentLoaded', function() {
       safeGoogleRun('getInitialData', [], result => {
-        // Simpan hasil terbaru ke localStorage
+        // Simpan hasil ke localStorage
         localStorage.setItem('pos_initial_data', JSON.stringify(result));
-        // Render ulang dengan data terbaru
-        renderInitialData(result);
+        // Perbarui UI secara sinkron dengan cache terbaru
+        renderFromCache();
       }, err => {
-        console.error("Gagal getInitialData:", err);
+        console.error("Gagal memuat data awal dari server:", err);
       });
+    });
+
+    function fetchData() {
+      // Fungsi perenderan antarmuka HANYA menggunakan cache lokal.
+      // Tidak ada API fetch lagi di sini.
+      renderFromCache();
     }
 
     function aksiTambahStok(id, nama) {

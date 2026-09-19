@@ -27,12 +27,17 @@ function doPost(e) {
       throw new Error('Action tidak ditemukan.');
     }
 
-    const backendFunction = globalThis[action];
-    if (typeof backendFunction !== 'function') {
-      throw new Error('Fungsi ' + action + ' tidak tersedia.');
+    let result;
+    if (action === 'getInitialData') {
+      result = getInitialData.apply(null, args);
+    } else {
+      const backendFunction = globalThis[action] || this[action];
+      if (typeof backendFunction !== 'function') {
+        throw new Error('Fungsi ' + action + ' tidak tersedia.');
+      }
+      result = backendFunction.apply(null, args);
     }
 
-    const result = backendFunction.apply(null, args);
     return ContentService.createTextOutput(JSON.stringify(result))
       .setMimeType(ContentService.MimeType.JSON);
   } catch (error) {
