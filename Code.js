@@ -1,5 +1,3 @@
-/// <reference types="google-apps-script" />
-
 /*************************************************
  * FLOU RICH POS
  * Code.gs
@@ -18,6 +16,26 @@ function doGet(e) {
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
 }
 
+function doPost(e) {
+  try {
+    const requestData = JSON.parse(e.postData.contents);
+    const action = requestData.action;
+    const args = requestData.args || [];
+    
+    let result;
+    if (action === 'checkLogin') {
+      result = checkLogin(args[0], args[1]);
+    } else {
+      result = { status: false, message: "Action tidak dikenal: " + action };
+    }
+    
+    return ContentService.createTextOutput(JSON.stringify(result))
+      .setMimeType(ContentService.MimeType.JSON);
+  } catch (error) {
+    return ContentService.createTextOutput(JSON.stringify({ status: false, message: error.toString() }))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+}
 
 /**
  * Login POS
