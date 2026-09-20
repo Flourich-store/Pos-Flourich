@@ -1,0 +1,6 @@
+# File yang tidak perlu di-push ke proyek Google Apps Script
+tests/**
+README.md
+package.json
+package-lock.json
+flourich_logo.png

@@ -241,6 +241,7 @@ function createDomStub() {
   const alerts = [];
   const confirms = [];
   const consoleLogs = [];
+  const intervalHolder = { cb: null };
 
   const windowObj = {
     location: { protocol: 'file:' },
@@ -249,6 +250,7 @@ function createDomStub() {
     sessionStorage,
     confirm: (msg) => { confirms.push(msg); return true; },
     alert: (msg) => { alerts.push(String(msg)); },
+    prompt: (msg) => (windowObj.__promptValue !== undefined ? windowObj.__promptValue : null),
     console: {
       log: (...a) => consoleLogs.push(['log', ...a].join(' ')),
       warn: (...a) => consoleLogs.push(['warn', ...a].join(' ')),
@@ -256,7 +258,7 @@ function createDomStub() {
     },
     setTimeout: (fn) => { fn(); return 0; },   // eksekusi sinkron agar mudah diuji
     clearTimeout: () => { },
-    setInterval: () => 0,
+    setInterval: (fn) => { intervalHolder.cb = fn; return 1; },
     clearInterval: () => { },
     navigator: { share: undefined, clipboard: { writeText: () => Promise.resolve() } },
     open: () => null,
@@ -265,6 +267,10 @@ function createDomStub() {
     __elements: elements
   };
   windowObj.document = doc;
+  Object.defineProperty(windowObj, '__lastIntervalCallback', {
+    get: () => intervalHolder.cb,
+    configurable: true
+  });
 
   return {
     window: windowObj,
@@ -310,6 +316,7 @@ function loadFrontend(dom, getInitialDataPayload) {
     navigator: w.navigator,
     location: w.location,
     event: undefined,
+    prompt: w.prompt,
     fetch: undefined // diisi test bila perlu (pengujian apiRequest)
   };
   sandbox.globalThis = sandbox;

@@ -2097,7 +2097,9 @@
     function startRealtimeSync() {
       stopRealtimeSync();
       realtimeTimer = setInterval(() => {
-        fetchData();
+        // Ambil data TERBARU dari server (bukan cache lama) agar stok multi-perangkat
+        // tetap sinkron tanpa refresh halaman.
+        refreshData(true);
       }, 10000);
     }
 
@@ -2300,22 +2302,27 @@
         }
     }
 
+    // Validasi + simpan respon getInitialData ke cache, lalu render ulang UI.
+    function simpanDanRenderData(result) {
+      // Validasi tipe hasil API sebelum disimpan: produk & penjualan harus array.
+      const safeResult = {
+        produk: result && Array.isArray(result.produk) ? result.produk : [],
+        penjualan: result && Array.isArray(result.penjualan) ? result.penjualan : [],
+        timestamp: result && result.timestamp ? result.timestamp : new Date().getTime()
+      };
+      if (!Array.isArray(result && result.produk) || !Array.isArray(result && result.penjualan)) {
+        console.warn("Respon getInitialData tidak berbentuk array produk/penjualan.", result);
+      }
+      // Simpan hasil ke localStorage
+      localStorage.setItem('pos_initial_data', JSON.stringify(safeResult));
+      // Perbarui UI secara sinkron dengan cache terbaru
+      renderFromCache();
+    }
+
     // Eksekusi API HANYA SATU KALI saat halaman selesai dimuat
     document.addEventListener('DOMContentLoaded', function () {
       safeGoogleRun('getInitialData', [], result => {
-        // Validasi tipe hasil API sebelum disimpan: produk & penjualan harus array.
-        const safeResult = {
-          produk: result && Array.isArray(result.produk) ? result.produk : [],
-          penjualan: result && Array.isArray(result.penjualan) ? result.penjualan : [],
-          timestamp: result && result.timestamp ? result.timestamp : new Date().getTime()
-        };
-        if (!Array.isArray(result && result.produk) || !Array.isArray(result && result.penjualan)) {
-          console.warn("Respon getInitialData tidak berbentuk array produk/penjualan.", result);
-        }
-        // Simpan hasil ke localStorage
-        localStorage.setItem('pos_initial_data', JSON.stringify(safeResult));
-        // Perbarui UI secara sinkron dengan cache terbaru
-        renderFromCache();
+        simpanDanRenderData(result);
       }, err => {
         console.error("Gagal memuat data awal dari server:", err);
       });
@@ -2324,6 +2331,61 @@
     function fetchData() {
       // Fungsi perenderan antarmuka HANYA menggunakan cache lokal.
       // Tidak ada API fetch lagi di sini.
+      renderFromCache();
+    }
+
+    // Ambil data TERBARU dari server (bukan cache), simpan ke cache, lalu render ulang.
+    // Dipakai setelah checkout/tambah stok sukses & oleh sinkronisasi berkala agar
+    // stok di layar langsung berubah tanpa perlu refresh halaman.
+    let isRefreshingData = false;
+    function refreshData(silent) {
+      if (isRefreshingData) return; // cegah request menumpuk
+      isRefreshingData = true;
+      safeGoogleRun('getInitialData', [], result => {
+        isRefreshingData = false;
+        simpanDanRenderData(result);
+      }, err => {
+        isRefreshingData = false;
+        console.error("Gagal menyegarkan data dari server:", err);
+        if (!silent) {
+          alert('Gagal memuat data terbaru: ' + (err && err.message ? err.message : err));
+        }
+      });
+    }
+
+    // Optimistic update: ubah stok satu produk di data lokal + cache SEKETIKA,
+    // lalu render ulang. delta negatif = pengurangan (checkout), positif = penambahan.
+    function terapkanPerubahanStokLokal(idProduk, delta) {
+      if (!Array.isArray(dataProduk) || dataProduk.length < 2) return;
+
+      const targetId = String(idProduk).trim();
+      for (let i = 1; i < dataProduk.length; i++) {
+        if (String(dataProduk[i][0] || '').trim() === targetId) {
+          dataProduk[i][2] = Math.max(0, Number(dataProduk[i][2] || 0) + delta);
+          break;
+        }
+      }
+
+      // Sinkronkan juga cache agar render berikutnya tetap konsisten
+      try {
+        const cached = localStorage.getItem('pos_initial_data');
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          if (parsed && Array.isArray(parsed.produk)) {
+            for (let i = 1; i < parsed.produk.length; i++) {
+              if (String(parsed.produk[i][0] || '').trim() === targetId) {
+                parsed.produk[i][2] = Math.max(0, Number(parsed.produk[i][2] || 0) + delta);
+                break;
+              }
+            }
+            localStorage.setItem('pos_initial_data', JSON.stringify(parsed));
+          }
+        }
+      } catch (e) {
+        console.warn("Gagal sinkronisasi cache stok lokal:", e);
+      }
+
+      // Render ulang agar tabel stok & dropdown langsung menampilkan angka baru
       renderFromCache();
     }
 
@@ -2344,7 +2406,9 @@
 
       safeGoogleRun('tambahStokProduk', [id, qty, role], msg => {
         alert(msg);
-        fetchData();
+        // Stok bertambah SEKETIKA di layar, lalu disegarkan dengan data server
+        terapkanPerubahanStokLokal(id, qty);
+        refreshData(true);
       }, err => {
         console.error(err);
         alert('Gagal menambah stok.');
@@ -2630,13 +2694,21 @@
 
       safeGoogleRun('prosesCheckout', [cart, metode, uangDibayar], function (res) {
         if (res.status === 'success') {
+          const itemsTerjual = Array.isArray(cart) ? cart.slice() : [];
           showSuccessModal(res);
           cart = [];
           renderCart();
           document.getElementById('inpBayar').value = '';
           document.getElementById('inpQty').value = 1;
           document.getElementById('kembalianBox').innerHTML = 'Uang Kembali : Rp 0';
-          fetchData();
+
+          // Logika stok langsung berkurang: kurangi stok lokal SEKETIKA
+          // berdasarkan item yang baru terjual, lalu ambil data terbaru dari server
+          // sebagai konfirmasi (tanpa perlu refresh halaman).
+          itemsTerjual.forEach(function (it) {
+            terapkanPerubahanStokLokal(it.id, -Number(it.jumlah || 0));
+          });
+          refreshData(true);
         } else {
           alert('Gagal : ' + res.message);
         }
