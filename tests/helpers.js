@@ -76,16 +76,23 @@ function createGasMock() {
     const produkSheet = makeSheet('Produk', rowsProduk, options.produkSheet);
     const penjualanSheet = makeSheet('Penjualan',
       [['id', 'tanggal', 'namaProduk', 'jumlah', 'totalHarga', 'metode', 'uangDibayar', 'uangKembali', 'Modal', 'biayaOperasional', 'labaBersih']]);
+    const userSheet = makeSheet('User', options.userRows || [
+      ['username', 'password', 'role'],
+      ['admin', 'password', 'SUPER_ADMIN'],
+      ['kasir', 'kasir123', 'KASIR']
+    ]);
 
     return {
       getSpreadsheetTimeZone: () => 'Asia/Jakarta',
       getSheetByName: (name) => {
         if (name === 'Produk') return options.noProdukSheet ? null : produkSheet;
         if (name === 'Penjualan') return options.noPenjualanSheet ? null : penjualanSheet;
+        if (name === 'User') return userSheet;
         return null;
       },
       __produk: produkSheet,
       __penjualan: penjualanSheet,
+      __user: userSheet,
       __props: {}
     };
   }
@@ -169,7 +176,8 @@ function loadBackend(gas) {
     getProdukData: sandbox.getProdukData,
     getPenjualanData: sandbox.getPenjualanData,
     getInitialData: sandbox.getInitialData,
-    doPost: sandbox.doPost
+    doPost: sandbox.doPost,
+    doGet: sandbox.doGet
   };
 }
 

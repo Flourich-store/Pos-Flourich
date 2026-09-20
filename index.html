@@ -1837,43 +1837,128 @@
   <script>
     const API_URL = 'https://script.google.com/macros/s/AKfycbzNNhSQCDyaxcZ5m1_2oiPrbyUOctjthaBW7HKOYk2L6ngDIi95FEQSgED2XmBAaOihOg/exec';
 
+    // ==== Ketahanan jaringan untuk semua panggilan API ====
+    // Kasus nyata: POST ke web app bisa gagal sesaat ("Failed to fetch") karena
+    // jaringan mobile tidak stabil atau jalur POST Google Apps Script yang lambat,
+    // padahal GET normal. Semua request kini diberi timeout + retry otomatis.
+    const API_TIMEOUT_MS = 25000; // batas tunggu per percobaan (cold start GAS bisa lambat)
+    const API_RETRY_MAKS = 3;     // total percobaan per request
+
+    function jedaMs(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+    // Aksi BACA yang aman dijadikan fallback jalur GET saat POST gagal jaringan.
+    // Aksi tulis (prosesCheckout, tambahStokProduk) sengaja TIDAK di daftar ini —
+    // kegagalannya harus dilaporkan ke kasir agar bisa menekan tombol lagi (idempoten).
+    const AKSI_BACA_LEWAT_GET = {
+      getInitialData: true,
+      checkLogin: true
+    };
+
+    function fetchDenganTimeout(url, opts) {
+      if (typeof AbortController === 'undefined') return fetch(url, opts);
+      const ctrl = new AbortController();
+      const timer = setTimeout(function () { ctrl.abort(); }, API_TIMEOUT_MS);
+      const gabungan = Object.assign({}, opts, { signal: ctrl.signal });
+      return fetch(url, gabungan).finally(function () { clearTimeout(timer); });
+    }
+
+    // Duck-typing lintas-realm: aman untuk error dari browser maupun sandbox
+    function adalahKegagalanJaringan(error) {
+      const nama = error && error.name ? String(error.name) : '';
+      const pesan = error && error.message ? String(error.message) : '';
+      return nama === 'AbortError' || nama === 'TypeError' || nama === 'GserveHtml' ||
+        pesan === 'Failed to fetch' || pesan === 'Load failed' ||
+        pesan === 'NetworkError when attempting to fetch resource.';
+    }
+
     async function apiRequest(action, args = []) {
-      try {
-        console.log('[POS API] request', { endpoint: API_URL, action: action });
-        const response = await fetch(API_URL, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'text/plain;charset=utf-8',
-            'Accept': 'application/json'
-          },
-          body: JSON.stringify({
-            action: action,
-            args: Array.isArray(args) ? args : [args]
-          })
-        });
+      let kegagalanTerakhir = null;
 
-        const text = await response.text();
-        console.log('[POS API] response', { status: response.status, text: text });
-        let payload = {};
-
+      for (let percobaan = 1; percobaan <= API_RETRY_MAKS; percobaan++) {
         try {
-          payload = text ? JSON.parse(text) : {};
-        } catch (e) {
-          console.error('[POS API] invalid JSON response', e);
-          let snippet = text ? text.substring(0, 50).replace(/<[^>]*>?/gm, '') : 'Kosong';
-          payload = { status: 'error', message: 'Respons server bukan JSON (Mungkin terblokir login Google atau error script). Cuplikan: ' + snippet };
-        }
+          console.log('[POS API] request', { endpoint: API_URL, action: action, percobaan: percobaan });
+          const response = await fetchDenganTimeout(API_URL, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'text/plain;charset=utf-8',
+              'Accept': 'application/json'
+            },
+            body: JSON.stringify({
+              action: action,
+              args: Array.isArray(args) ? args : [args]
+            })
+          });
 
-        if (!response.ok || payload.status === 'error') {
-          throw new Error(payload.message || 'Permintaan ke server gagal.');
-        }
+          const text = await response.text();
+          console.log('[POS API] response', { status: response.status, percobaan: percobaan, text: String(text).slice(0, 200) });
 
-        return payload.data !== undefined ? payload.data : payload;
-      } catch (error) {
-        console.error('[POS API] fetch error', error);
-        const message = error && error.message ? error.message : 'Koneksi ke server tidak tersedia.';
-        throw new Error(message);
+          // Google kadang membalas halaman HTML error (bukan JSON) saat infrastrukturnya
+          // bermasalah — perlakukan seperti kegagalan jaringan agar di-retry.
+          if (!text || String(text).trim().charAt(0) === '<') {
+            throw { name: 'GserveHtml', message: 'HTML_GSERVE' };
+          }
+
+          let payload = {};
+          try {
+            payload = JSON.parse(text);
+          } catch (e) {
+            console.error('[POS API] invalid JSON response', e);
+            throw { name: 'GserveHtml', message: 'HTML_GSERVE' };
+          }
+
+          if (!response.ok) {
+            // HTTP non-200 (5xx, 429, dsb.) = masalah infrastruktur -> layak di-retry.
+            throw { name: 'GserveHtml', message: 'HTTP_' + response.status };
+          }
+          if (payload.status === 'error') {
+            // Error bisnis dari backend (validasi, stok, dsb.): jangan di-retry,
+            // tampilkan pesannya apa adanya. Backend GAS selalu balas 200 untuk ini.
+            throw { __bisnis: true, error: new Error(payload.message || 'Permintaan ke server gagal.') };
+          }
+
+          return payload.data !== undefined ? payload.data : payload;
+        } catch (error) {
+          if (error && error.__bisnis) {
+            console.error('[POS API] error bisnis (tanpa retry)', error.error);
+            throw error.error;
+          }
+          if (!adalahKegagalanJaringan(error)) {
+            console.error('[POS API] error tak terduga (tanpa retry)', error);
+            throw error instanceof Error ? error : new Error(String(error && error.message || error));
+          }
+          kegagalanTerakhir = error;
+          console.warn('[POS API] percobaan ' + percobaan + '/' + API_RETRY_MAKS + ' gagal:', error && (error.message || error));
+          if (percobaan < API_RETRY_MAKS) {
+            await jedaMs(800 * percobaan); // backoff: 0.8s, 1.6s
+          }
+        }
       }
+
+      // Semua percobaan POST gagal. Untuk aksi BACA, coba jalur GET (jalur POST Google
+      // kadang mati total padahal GET normal — kasus nyata "Failed to fetch").
+      if (kegagalanTerakhir && AKSI_BACA_LEWAT_GET[action]) {
+        try {
+          console.warn('[POS API] fallback ke GET untuk', action);
+          const urlGet = API_URL + '?action=' + encodeURIComponent(action) + '&args=' + encodeURIComponent(JSON.stringify(Array.isArray(args) ? args : [args]));
+          const response = await fetchDenganTimeout(urlGet, { method: 'GET', headers: { 'Accept': 'application/json' } });
+          const text = await response.text();
+          if (!text || String(text).trim().charAt(0) === '<') {
+            throw new Error('Respons GET bukan JSON');
+          }
+          const payload = JSON.parse(text);
+          if (payload.status === 'error') {
+            throw new Error(payload.message || 'Permintaan ke server gagal.');
+          }
+          console.log('[POS API] fallback GET sukses untuk', action);
+          return payload.data !== undefined ? payload.data : payload;
+        } catch (errGet) {
+          console.error('[POS API] fallback GET juga gagal', errGet);
+        }
+      }
+
+      console.error('[POS API] semua ' + API_RETRY_MAKS + ' percobaan gagal', kegagalanTerakhir);
+      throw new Error('Koneksi ke server terputus (jaringan tidak stabil atau server Google sedang sibuk). ' +
+        'Periksa sinyal internet lalu coba lagi. Transaksi BELUM tercatat dan isi keranjang Anda masih aman.');
     }
 
     let cart = [];
@@ -2763,6 +2848,9 @@
           alert('Gagal : ' + res.message);
         }
       }, function (err) {
+        // PENTING: keranjang sengaja TIDAK dikosongkan saat checkout gagal — jika
+        // kegagalannya karena jaringan, transaksi belum tercatat dan kasir cukup
+        // menekan PROSES TRANSAKSI lagi tanpa memasukkan ulang item.
         const msg = err && err.message ? err.message : err;
         alert('Checkout gagal: ' + msg);
         console.error('Checkout error:', err);

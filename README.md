@@ -16,6 +16,7 @@ node tests/backend.test.js
 node tests/frontend.test.js
 node tests/frontend_stok.test.js
 node tests/frontend_login.test.js
+node tests/frontend_jaringan.test.js
 ```
 
 ### Cakupan pengujian
@@ -51,13 +52,23 @@ node tests/frontend_login.test.js
 - Pemulihan sesi (refresh halaman saat masih login) mengambil data terbaru dari server.
 - Login gagal/kredensial kosong tidak memicu fetch data.
 
+**Ketahanan jaringan (`tests/frontend_jaringan.test.js`) — 13 kasus:**
+- Backend: `doGet` fallback GET untuk aksi baca (`getInitialData`, `checkLogin`);
+  aksi tulis (`prosesCheckout`, `tambahStokProduk`) **ditolak** lewat GET (keamanan
+  transaksi); halaman web app tetap bisa dibuka tanpa parameter.
+- Frontend `apiRequest`: timeout 25 detik + retry otomatis 3x dengan backoff;
+  fallback jalur GET hanya untuk aksi baca; respons HTML error Google & HTTP 5xx
+  di-retry; error bisnis (stok kurang, dsb.) tampil apa adanya tanpa retry; pesan
+  akhir menenangkan (transaksi belum tercatat, keranjang aman).
+
 ### Struktur berkas pengujian
 
 ```
 tests/
-├── helpers.js               # Mock GAS + stub DOM + runner mini
-├── backend.test.js          # Suite backend (Code.js)
-├── frontend.test.js         # Suite frontend (index.html)
-├── frontend_stok.test.js    # Regresi stok langsung berubah di UI
-└── frontend_login.test.js   # Regresi stok tampil setelah login
+├── helpers.js                  # Mock GAS + stub DOM + runner mini
+├── backend.test.js             # Suite backend (Code.js)
+├── frontend.test.js            # Suite frontend (index.html)
+├── frontend_stok.test.js       # Regresi stok langsung berubah di UI
+├── frontend_login.test.js      # Regresi stok tampil setelah login
+└── frontend_jaringan.test.js   # Regresi ketahanan jaringan (retry + fallback GET)
 ```

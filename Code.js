@@ -5,40 +5,76 @@
  *************************************************/
 
 /**
- * Menampilkan halaman utama (POS-only entrypoint)
+ * Menampilkan halaman utama (POS-only entrypoint) + API GET (fallback jaringan).
+ * - Tanpa parameter ?action=...  -> sajikan halaman web app (HTML, perilaku asli).
+ * - Dengan ?action=...           -> API JSON (aksi baca saja; aksi tulis ditolak).
  * Penting: hindari routing page=dashboard di file POS agar login POS tidak bentrok.
  */
 function doGet(e) {
+  const params = (e && e.parameter) ? e.parameter : {};
+  const action = String(params.action || '').trim();
+
+  // === Mode API GET (fallback jaringan) ===
+  if (action) {
+    try {
+      // Pengaman: aksi tulis TIDAK BOLEH lewat GET (mencegah transaksi ganda via
+      // URL yang ter-catat di history/refresh, dan menjaga aksi tetap idempoten).
+      if (AKSI_TULIS.indexOf(action) !== -1) {
+        throw new Error('Aksi "' + action + '" hanya diizinkan lewat POST (keamanan transaksi).');
+      }
+      const requestData = {
+        action: action,
+        args: params.args ? JSON.parse(params.args) : []
+      };
+      return ContentService.createTextOutput(JSON.stringify(eksekusiAksi(requestData)))
+        .setMimeType(ContentService.MimeType.JSON);
+    } catch (error) {
+      return ContentService.createTextOutput(JSON.stringify({
+        status: 'error',
+        message: error && error.message ? error.message : String(error)
+      }))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+  }
+
+  // === Mode halaman web app (perilaku asli) ===
   return HtmlService.createTemplateFromFile('index')
     .evaluate()
     .setTitle('FLOU RICH - POS')
     .addMetaTag('viewport', 'width=device-width, initial-scale=1')
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+}// Router aksi bersama: dipakai doPost DAN doGet (fallback jaringan).
+// Hanya aksi yang TIDAK mengubah data yang boleh lewat doGet — aksi tulis
+// (prosesCheckout, tambahStokProduk, dsb.) WAJIB lewat POST.
+const AKSI_TULIS = ['prosesCheckout', 'tambahStokProduk'];
+
+function eksekusiAksi(requestData) {
+  const action = String(requestData.action || '').trim();
+  const args = Array.isArray(requestData.args) ? requestData.args : [];
+
+  if (!action) {
+    throw new Error('Action tidak ditemukan.');
+  }
+
+  let result;
+  if (action === 'getInitialData') {
+    result = getInitialData.apply(null, args);
+  } else {
+    const backendFunction = globalThis[action] || this[action];
+    if (typeof backendFunction !== 'function') {
+      throw new Error('Fungsi ' + action + ' tidak tersedia.');
+    }
+    result = backendFunction.apply(null, args);
+  }
+
+  return result;
 }
 
 function doPost(e) {
   try {
     const rawBody = e && e.postData && e.postData.contents ? e.postData.contents : '{}';
     const requestData = JSON.parse(rawBody);
-    const action = String(requestData.action || '').trim();
-    const args = Array.isArray(requestData.args) ? requestData.args : [];
-
-    if (!action) {
-      throw new Error('Action tidak ditemukan.');
-    }
-
-    let result;
-    if (action === 'getInitialData') {
-      result = getInitialData.apply(null, args);
-    } else {
-      const backendFunction = globalThis[action] || this[action];
-      if (typeof backendFunction !== 'function') {
-        throw new Error('Fungsi ' + action + ' tidak tersedia.');
-      }
-      result = backendFunction.apply(null, args);
-    }
-
-    return ContentService.createTextOutput(JSON.stringify(result))
+    return ContentService.createTextOutput(JSON.stringify(eksekusiAksi(requestData)))
       .setMimeType(ContentService.MimeType.JSON);
   } catch (error) {
     return ContentService.createTextOutput(JSON.stringify({

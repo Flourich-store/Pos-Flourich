@@ -4,6 +4,6 @@
   "private": true,
   "description": "POS Flourich - Google Apps Script (pengujian lokal via Node)",
   "scripts": {
-    "test": "node tests/backend.test.js && node tests/frontend.test.js && node tests/frontend_stok.test.js && node tests/frontend_login.test.js"
+    "test": "node tests/backend.test.js && node tests/frontend.test.js && node tests/frontend_stok.test.js && node tests/frontend_login.test.js && node tests/frontend_jaringan.test.js"
   }
 }
