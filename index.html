@@ -1934,7 +1934,8 @@
         document.getElementById('loginPage').classList.add('hidden');
         document.getElementById('mainPage').classList.remove('hidden');
         updateUserBadge(savedUser, savedRole);
-        fetchData();
+        // Sesi dipulihkan: ambil data terbaru dari server, bukan cuma render cache
+        muatDataAwalSetelahLogin();
         if (!isLocalMode) startRealtimeSync();
         const remainingTime = parseInt(sessionExpiry) - now;
         startSessionTimer(remainingTime);
@@ -2032,7 +2033,9 @@
           sessionStorage.setItem('pos_role', res.role);
 
           updateUserBadge(res.username, res.role);
-          fetchData();
+          // Ambil data TERBARU dari server segera (bukan cache) agar stok
+          // langsung tampil setelah login tanpa perlu refresh halaman.
+          muatDataAwalSetelahLogin();
           startSessionTimer(durasiSesi);
           if (!isLocalMode) startRealtimeSync();
         } else {
@@ -2332,6 +2335,53 @@
       // Fungsi perenderan antarmuka HANYA menggunakan cache lokal.
       // Tidak ada API fetch lagi di sini.
       renderFromCache();
+    }
+
+    // Render paksa (abaikan guard isUserInteracting): dipakai tepat setelah login,
+    // saat UI masih kosong sehingga tidak ada interaksi berjalan yang perlu dilindungi.
+    // cacheJson (opsional) = hasil API valid untuk disimpan ke cache sebelum render.
+    function renderDataPaksa(cacheJson) {
+      const sebelumnya = isUserInteracting;
+      isUserInteracting = false;
+      try {
+        if (cacheJson !== undefined) {
+          try {
+            localStorage.setItem('pos_initial_data', JSON.stringify(cacheJson));
+          } catch (e) {
+            console.warn('Gagal menyimpan cache setelah login:', e);
+          }
+        }
+        renderFromCache();
+      } finally {
+        isUserInteracting = sebelumnya;
+      }
+    }
+
+    // Ambil data TERBARU dari server SEGERA setelah login (atau saat sesi dipulihkan),
+    // lalu render TANPA terhalang guard interaksi agar stok langsung tampil.
+    // Ada fallback ke cache + retry otomatis (maks 2x) bila server lambat/gagal
+    // (mis. cold start Apps Script di jaringan mobile).
+    let muatDataRetry = 0;
+    function muatDataAwalSetelahLogin() {
+      safeGoogleRun('getInitialData', [], result => {
+        muatDataRetry = 0;
+        // Validasi tipe sama seperti simpanDanRenderData, tapi render PAKSA.
+        const safeResult = {
+          produk: result && Array.isArray(result.produk) ? result.produk : [],
+          penjualan: result && Array.isArray(result.penjualan) ? result.penjualan : [],
+          timestamp: result && result.timestamp ? result.timestamp : new Date().getTime()
+        };
+        renderDataPaksa(safeResult);
+      }, err => {
+        console.error('Gagal memuat data awal setelah login:', err);
+        // Fallback: tampilkan cache yang ada agar stok tidak kosong menunggu server,
+        // lalu coba ambil dari server lagi beberapa saat kemudian.
+        renderDataPaksa();
+        if (muatDataRetry < 2) {
+          muatDataRetry++;
+          setTimeout(function () { muatDataAwalSetelahLogin(); }, 2500);
+        }
+      });
     }
 
     // Ambil data TERBARU dari server (bukan cache), simpan ke cache, lalu render ulang.

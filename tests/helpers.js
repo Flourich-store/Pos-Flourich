@@ -221,6 +221,7 @@ function createDomStub() {
     querySelector: () => makeElem('tbody-stub'),
     addEventListener: (type, fn) => { (listeners['document:' + type] = listeners['document:' + type] || []).push(fn); },
     activeElement: null,
+    body: makeElem('body'),
     createElement: (tag) => makeElem('created-' + tag)
   };
 
@@ -242,6 +243,7 @@ function createDomStub() {
   const confirms = [];
   const consoleLogs = [];
   const intervalHolder = { cb: null };
+  const timeoutHolder = { pending: [] };
 
   const windowObj = {
     location: { protocol: 'file:' },
@@ -256,7 +258,15 @@ function createDomStub() {
       warn: (...a) => consoleLogs.push(['warn', ...a].join(' ')),
       error: (...a) => consoleLogs.push(['error', ...a].join(' '))
     },
-    setTimeout: (fn) => { fn(); return 0; },   // eksekusi sinkron agar mudah diuji
+    setTimeout: (fn, delayMs) => {
+      // Eksekusi sinkron HANYA untuk delay pendek (<= 5000ms, mis. retry 2.5s & mock file: 100ms).
+      // Timer panjang (mis. sesi 30 menit / print 300s... tidak, print 300ms ok) tidak dieksekusi
+      // supaya tidak memicu logout otomatis dsb. saat pengujian.
+      const d = typeof delayMs === 'number' ? delayMs : 0;
+      if (d <= 5000) { fn(); return 0; }
+      timeoutHolder.pending.push(fn);
+      return timeoutHolder.pending.length;   // id palsu
+    },
     clearTimeout: () => { },
     setInterval: (fn) => { intervalHolder.cb = fn; return 1; },
     clearInterval: () => { },
@@ -269,6 +279,10 @@ function createDomStub() {
   windowObj.document = doc;
   Object.defineProperty(windowObj, '__lastIntervalCallback', {
     get: () => intervalHolder.cb,
+    configurable: true
+  });
+  Object.defineProperty(windowObj, '__pendingTimeouts', {
+    get: () => timeoutHolder.pending,
     configurable: true
   });
 
