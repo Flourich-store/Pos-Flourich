@@ -852,7 +852,8 @@
       min-width: 100%;
       table-layout: fixed;
       border-collapse: collapse;
-      table-layout: auto !important; /* Biarkan browser menyesuaikan lebar kolom secara otomatis */
+      table-layout: auto !important;
+      /* Biarkan browser menyesuaikan lebar kolom secara otomatis */
       margin: 0;
     }
 
@@ -910,8 +911,10 @@
       display: block;
       line-height: 1.2;
       word-break: normal;
-      min-width: 90px; /* Memberikan ruang minimal agar tidak sempit */
-      white-space: normal !important; /* Memastikan teks nama produk berbaris normal */
+      min-width: 90px;
+      /* Memberikan ruang minimal agar tidak sempit */
+      white-space: normal !important;
+      /* Memastikan teks nama produk berbaris normal */
       font-size: 12px;
     }
 
@@ -1445,6 +1448,7 @@
       .total-price-text {
         font-size: 22px;
       }
+
       h3 {
         font-size: 15px;
       }
@@ -1455,13 +1459,13 @@
       }
 
       .receipt-actions {
-      flex-direction: column;
-    }
+        flex-direction: column;
+      }
 
       .btn-receipt-action {
         min-height: 44px;
-    }
       }
+    }
 
     /* Loading overlay */
     .app-loading {
@@ -1496,7 +1500,7 @@
     @keyframes spin {
       to {
         transform: rotate(360deg);
-    }
+      }
     }
 
     button.is-loading {
@@ -1563,6 +1567,15 @@
         const header = ['id', 'tanggal', 'namaProduk', 'jumlah', 'totalHarga', 'metode', 'uangDibayar', 'uangKembali'];
         const transactions = JSON.parse(localStorage.getItem('mock_transactions') || '[]');
         return [header, ...transactions];
+      };
+
+      // Mock getInitialData agar mode lokal juga mengisi cache seperti respon API asli
+      google.script.run.getInitialData = function () {
+        return {
+          produk: google.script.run.getProdukData(),
+          penjualan: google.script.run.getPenjualanData(),
+          timestamp: new Date().getTime()
+        };
       };
 
       google.script.run.tambahStokProduk = function (idProduk, qtyTambah, role) {
@@ -1693,7 +1706,8 @@
 
         <div style="margin-top: 28px;">
           <h3><i class="fa-solid fa-boxes-stacked"></i> Stok Produk Hari Ini</h3>
-          <div class="table-responsive overflow-x-auto w-full" style="border-radius: var(--radius-md); overflow-x: auto;">
+          <div class="table-responsive overflow-x-auto w-full"
+            style="border-radius: var(--radius-md); overflow-x: auto;">
             <table id="stokTable" class="min-w-[650px]" style="min-width: 650px;">
               <colgroup>
                 <col style="width: 45px;">
@@ -1785,23 +1799,23 @@
           <div class="table-scroll-mobile">
             <table id="penjualanTable">
               <thead>
-              <tr>
-                <th>ID Transaksi</th>
-                <th>Tanggal / Waktu</th>
-                <th>Nama Produk</th>
-                <th>Qty</th>
-                <th>Total Harga</th>
-                <th>Metode</th>
-                <th>Uang Dibayar</th>
-                <th>Uang Kembali</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td colspan="8" style="text-align:center; color:#94a3b8; padding: 24px;">Memuat riwayat penjualan...
-                </td>
-              </tr>
-            </tbody>
+                <tr>
+                  <th>ID Transaksi</th>
+                  <th>Tanggal / Waktu</th>
+                  <th>Nama Produk</th>
+                  <th>Qty</th>
+                  <th>Total Harga</th>
+                  <th>Metode</th>
+                  <th>Uang Dibayar</th>
+                  <th>Uang Kembali</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td colspan="8" style="text-align:center; color:#94a3b8; padding: 24px;">Memuat riwayat penjualan...
+                  </td>
+                </tr>
+              </tbody>
             </table>
           </div>
         </div>
@@ -1863,7 +1877,11 @@
     }
 
     let cart = [];
-    let masterData = [];
+    // Inisialisasi aman di tingkat global: selalu array, tidak pernah undefined/null
+    // sehingga tidak memicu "TypeError: dataProduk.findIndex is not a function" saat checkout.
+    let dataProduk = [];
+    // masterData adalah alias dari dataProduk (dipakai fungsi addToCart/updateCartQty)
+    let masterData = dataProduk;
     let rawPenjualanData = [];
     let filteredPenjualanData = [];
     let logoutTimer = null;
@@ -1875,14 +1893,14 @@
     const isLocalMode = window.location.protocol === 'file:';
 
     // Event listener global untuk melindungi proses input & dropdown dari refresh latar belakang
-    document.addEventListener('focusin', function(e) {
+    document.addEventListener('focusin', function (e) {
       const tag = e.target.tagName ? e.target.tagName.toLowerCase() : '';
       if (tag === 'select' || tag === 'input' || tag === 'textarea') {
         isUserInteracting = true;
       }
     });
 
-    document.addEventListener('focusout', function(e) {
+    document.addEventListener('focusout', function (e) {
       isUserInteracting = false;
     });
 
@@ -2176,14 +2194,21 @@
 
     function renderInitialData(dataObj) {
       if (!dataObj) return;
-      
+
       // --- 1. Render Produk ---
-      const data = dataObj.produk;
-      if (data) {
-        masterData = data;
+      // Type guard: pastikan data produk adalah array sebelum dipakai (fallback ke array kosong
+      // agar aplikasi tidak crash jika gagal memuat data dari API).
+      const data = Array.isArray(dataObj.produk) ? dataObj.produk : [];
+      if (!Array.isArray(dataProduk)) dataProduk = [];
+      if (!Array.isArray(masterData)) masterData = [];
+
+      masterData = data;
+      dataProduk = data;
+
+      if (data.length > 1) {
         const sel = document.getElementById('selProduk');
         const tbody = document.querySelector('#stokTable tbody');
-        
+
         let selHTML = '';
         let tbodyHTML = '';
 
@@ -2239,12 +2264,14 @@
       }
 
       // --- 2. Render Penjualan ---
-      const dataJual = dataObj.penjualan;
-      if (dataJual) {
-        rawPenjualanData = dataJual;
-        applyFilter(false);
-        toggleUangInput();
-      }
+      // Type guard: pastikan data penjualan adalah array sebelum dipakai .slice/.filter
+      const dataJual = Array.isArray(dataObj.penjualan) ? dataObj.penjualan : [];
+      if (!Array.isArray(rawPenjualanData)) rawPenjualanData = [];
+      if (!Array.isArray(filteredPenjualanData)) filteredPenjualanData = [];
+
+      rawPenjualanData = dataJual;
+      applyFilter(false);
+      toggleUangInput();
     }
 
     function renderFromCache() {
@@ -2252,26 +2279,41 @@
       // dengan input atau dropdown (mencegah flickering/tertutup paksa di mobile)
       if (isUserInteracting) {
         return;
-      }
-
-      const cached = localStorage.getItem('pos_initial_data');
-      if (cached) {
-        try {
-          const parsed = JSON.parse(cached);
-          renderInitialData(parsed);
-        } catch (e) {
-          console.error("Gagal parse cache lokal:", e);
+      }        const cached = localStorage.getItem('pos_initial_data');
+        if (cached) {
+          try {
+            const parsed = JSON.parse(cached);
+            // Validasi struktur cache: produk & penjualan wajib berupa array.
+            // Jika korup/tidak valid, buang cache agar tidak meracuni UI.
+            if (parsed && Array.isArray(parsed.produk) && Array.isArray(parsed.penjualan)) {
+              renderInitialData(parsed);
+            } else {
+              console.warn("Cache lokal tidak valid (produk/penjualan bukan array), cache dibuang.");
+              localStorage.removeItem('pos_initial_data');
+            }
+          } catch (e) {
+            console.error("Gagal parse cache lokal:", e);
+            localStorage.removeItem('pos_initial_data');
+          }
+        } else {
+          console.warn("Tidak ada data di cache lokal.");
         }
-      } else {
-        console.warn("Tidak ada data di cache lokal.");
-      }
     }
 
     // Eksekusi API HANYA SATU KALI saat halaman selesai dimuat
-    document.addEventListener('DOMContentLoaded', function() {
+    document.addEventListener('DOMContentLoaded', function () {
       safeGoogleRun('getInitialData', [], result => {
+        // Validasi tipe hasil API sebelum disimpan: produk & penjualan harus array.
+        const safeResult = {
+          produk: result && Array.isArray(result.produk) ? result.produk : [],
+          penjualan: result && Array.isArray(result.penjualan) ? result.penjualan : [],
+          timestamp: result && result.timestamp ? result.timestamp : new Date().getTime()
+        };
+        if (!Array.isArray(result && result.produk) || !Array.isArray(result && result.penjualan)) {
+          console.warn("Respon getInitialData tidak berbentuk array produk/penjualan.", result);
+        }
         // Simpan hasil ke localStorage
-        localStorage.setItem('pos_initial_data', JSON.stringify(result));
+        localStorage.setItem('pos_initial_data', JSON.stringify(safeResult));
         // Perbarui UI secara sinkron dengan cache terbaru
         renderFromCache();
       }, err => {
@@ -2445,6 +2487,11 @@
     }
 
     function addToCart() {
+      // Type guard: masterData (dataProduk) harus array terisi sebelum dipakai .find()
+      if (!Array.isArray(masterData) || masterData.length <= 1) {
+        return alert('Data produk belum termuat. Muat ulang halaman lalu coba lagi.');
+      }
+
       const id = document.getElementById('selProduk').value;
       const qty = parseInt(document.getElementById('inpQty').value, 10);
       const prod = masterData.find(x => x[0] == id);
@@ -2468,7 +2515,7 @@
     function updateCartQty(index, delta) {
       if (index < 0 || index >= cart.length) return;
       const item = cart[index];
-      const prod = masterData.find(x => x[0] == item.id);
+      const prod = Array.isArray(masterData) ? masterData.find(x => x[0] == item.id) : null;
 
       const newQty = item.jumlah + delta;
       if (newQty <= 0) {
@@ -2561,7 +2608,13 @@
     }
 
     function checkout() {
+      if (!Array.isArray(cart)) cart = []; // fallback aman jika cart tercemar nilai non-array
       if (cart.length === 0) return alert('Keranjang belanja masih kosong!');
+
+      // Type guard: pastikan data produk siap sebelum transaksi diproses.
+      if (!Array.isArray(dataProduk) || dataProduk.length <= 1) {
+        return alert('Data produk belum termuat dengan benar (gagal memuat dari server). Muat ulang halaman lalu coba lagi.');
+      }
 
       const metode = document.getElementById('selMetode').value;
       let uangDibayar = 0;
@@ -2588,7 +2641,9 @@
           alert('Gagal : ' + res.message);
         }
       }, function (err) {
-        alert(err);
+        const msg = err && err.message ? err.message : err;
+        alert('Checkout gagal: ' + msg);
+        console.error('Checkout error:', err);
       });
     }
 
@@ -2802,8 +2857,11 @@ Terima kasih atas kunjungan Anda!
         style="position: absolute; top: 12px; right: 12px; background: #f1f5f9; border: 1px solid var(--border); width: 32px; height: 32px; border-radius: 50%; font-size: 14px; color: #64748b; cursor: pointer; display: flex; align-items: center; justify-content: center; box-shadow: var(--shadow-sm); z-index: 10;">
         <i class="fa-solid fa-xmark"></i>
       </button>
-      <h4 id="previewModalTitle" style="margin-bottom: 12px; font-size: 16px; color: var(--bg-dark); font-weight: 700; text-align: left; padding-right: 32px;">Foto Produk</h4>
-      <img id="previewModalImg" src="" alt="Preview Produk" onerror="this.onerror=null;this.src='https://placehold.co/300x300?text=Foto+Tidak+Tersedia';">
+      <h4 id="previewModalTitle"
+        style="margin-bottom: 12px; font-size: 16px; color: var(--bg-dark); font-weight: 700; text-align: left; padding-right: 32px;">
+        Foto Produk</h4>
+      <img id="previewModalImg" src="" alt="Preview Produk"
+        onerror="this.onerror=null;this.src='https://placehold.co/300x300?text=Foto+Tidak+Tersedia';">
     </div>
   </div>
 

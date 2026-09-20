@@ -1,0 +1,9 @@
+{
+  "name": "pos-flourich",
+  "version": "1.0.0",
+  "private": true,
+  "description": "POS Flourich - Google Apps Script (pengujian lokal via Node)",
+  "scripts": {
+    "test": "node tests/backend.test.js && node tests/frontend.test.js"
+  }
+}

@@ -56,7 +56,7 @@ function checkLogin(username, password) {
 
   const sheet = getSpreadsheet().getSheetByName("User");
 
-  if (!sheet) return {status: false, message: "Sheet User tidak ditemukan"};
+  if (!sheet) return { status: false, message: "Sheet User tidak ditemukan" };
 
   const data = sheet.getDataRange().getValues();
 
@@ -78,7 +78,7 @@ function checkLogin(username, password) {
 
   }
 
-  return {status: false, message: "Username atau password salah"};
+  return { status: false, message: "Username atau password salah" };
 }
 
 
@@ -101,7 +101,7 @@ function getDrivePhotoList() {
       const fileId = file.getId();
       // Gunakan URL CDN LH3 Google yang langsung dapat dirender di tag img
       const directUrl = "https://lh3.googleusercontent.com/d/" + fileId;
-      
+
       // Bersihkan nama file: hilangkan ekstensi (.png, .jpg, .jpeg, .webp, dll)
       const baseName = fileName.replace(/\.[^/.]+$/, "").trim();
       const cleanName = baseName.toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -126,7 +126,7 @@ function getDrivePhotoList() {
  */
 function matchPhotoForProduct(id, nama, photoList) {
   if (!photoList || photoList.length === 0) return '';
-  
+
   const rawNama = String(nama || '').trim();
   const lowerNama = rawNama.toLowerCase();
   const cleanNama = lowerNama.replace(/[^a-z0-9]/g, '');
@@ -186,7 +186,7 @@ function getProdukData() {
   }
 
   const data = sheet.getDataRange().getValues();
-  
+
   if (data.length === 0) {
     return [['id', 'nama', 'stok', 'harga', 'foto_url']];
   }
@@ -336,18 +336,18 @@ function getPenjualanData() {
     }
 
     hasil.push([
-  String(row[0]),          // ID
-  tanggal,                 // Tanggal
-  String(row[2] || ""),    // Nama Produk
-  Number(row[3] || 0),     // Jumlah
-  Number(row[4] || 0),     // Total Harga
-  String(row[5] || ""),    // Metode
-  Number(row[6] || 0),     // Uang Dibayar
-  Number(row[7] || 0),     // Uang Kembali
-  Number(row[8] || 0),     // Modal (Kolom I)
-  Number(row[9] || 0),     // Biaya Operasional (Kolom J)
-  Number(row[10] || 0)     // Laba Bersih (Kolom K)
-]);
+      String(row[0]),          // ID
+      tanggal,                 // Tanggal
+      String(row[2] || ""),    // Nama Produk
+      Number(row[3] || 0),     // Jumlah
+      Number(row[4] || 0),     // Total Harga
+      String(row[5] || ""),    // Metode
+      Number(row[6] || 0),     // Uang Dibayar
+      Number(row[7] || 0),     // Uang Kembali
+      Number(row[8] || 0),     // Modal (Kolom I)
+      Number(row[9] || 0),     // Biaya Operasional (Kolom J)
+      Number(row[10] || 0)     // Laba Bersih (Kolom K)
+    ]);
 
   }
 
@@ -482,7 +482,32 @@ function prosesCheckout(cart, metode, uangDibayar) {
       return { status: "error", message: "Sheet 'Produk' atau 'Penjualan' tidak ditemukan." };
     }
 
-    const dataProduk = shProduk.getDataRange().getValues();
+    // Inisialisasi aman: selalu array, tidak pernah undefined/null.
+    let dataProduk = [];
+    try {
+      const rawProduk = shProduk.getDataRange().getValues();
+      dataProduk = Array.isArray(rawProduk) ? rawProduk : [];
+    } catch (readErr) {
+      Logger.log("prosesCheckout: gagal membaca sheet Produk: " + readErr);
+    }
+
+    // Type guard: jika dataProduk bukan array (gagal memuat data dari sheet/API),
+    // fallback ke array kosong agar tidak crash dengan TypeError 'findIndex is not a function'.
+    if (!Array.isArray(dataProduk)) {
+      Logger.log("prosesCheckout: dataProduk bukan array, fallback ke array kosong.");
+      dataProduk = [];
+    }
+
+    // Validasi data Produk: minimal harus ada baris header (kolom 0..3 = id, nama, stok, harga).
+    if (dataProduk.length < 2 ||
+      !Array.isArray(dataProduk[0]) ||
+      dataProduk[0].length < 4) {
+      return {
+        status: "error",
+        message: "Data produk belum termuat dengan benar (sheet Produk kosong/bermasalah). Muat ulang halaman lalu coba lagi."
+      };
+    }
+
     let grandTotal = 0;
     const validatedItems = [];
 
@@ -499,7 +524,10 @@ function prosesCheckout(cart, metode, uangDibayar) {
         return { status: "error", message: "Jumlah item harus lebih dari 0." };
       }
 
-      const produkindex = dataProduk.findindex(row => String(row[0] || '').trim() === itemId);
+      // Type guard sebelum memanggil findIndex: hanya array yang punya method .findIndex().
+      const produkindex = Array.isArray(dataProduk)
+        ? dataProduk.findIndex(row => String(row[0] || '').trim() === itemId)
+        : -1;
       if (produkindex <= 0) {
         return { status: "error", message: "Produk ID " + itemId + " tidak ditemukan." };
       }
@@ -562,7 +590,9 @@ function prosesCheckout(cart, metode, uangDibayar) {
         labaBersih
       ]);
 
-      const produkindex = dataProduk.findindex(row => String(row[0] || '').trim() === item.id);
+      const produkindex = Array.isArray(dataProduk)
+        ? dataProduk.findIndex(row => String(row[0] || '').trim() === item.id)
+        : -1;
       if (produkindex > 0) {
         const stokBaru = Number(dataProduk[produkindex][2] || 0) - item.jumlah;
         dataProduk[produkindex][2] = stokBaru;
@@ -590,13 +620,13 @@ function prosesCheckout(cart, metode, uangDibayar) {
 /**
  * Reset stok harian
  */
-function resetStokHarian(){
+function resetStokHarian() {
 
   const ss = getSpreadsheet();
 
   const sheet = ss.getSheetByName("Produk");
 
-  if(!sheet) return;
+  if (!sheet) return;
 
   const data = sheet.getDataRange().getValues();
 
@@ -612,13 +642,13 @@ function resetStokHarian(){
 /**
  * Trigger Manual
  */
-function createDailyTrigger(){
+function createDailyTrigger() {
 
   ScriptApp.newTrigger("resetStokHarian")
-  .timeBased()
-  .everyDays(1)
-  .atHour(0)
-  .create();
+    .timeBased()
+    .everyDays(1)
+    .atHour(0)
+    .create();
 
 }
 
@@ -628,10 +658,10 @@ function createDailyTrigger(){
 function logoutUser() {
   // Jika Anda menggunakan Session (PropertiesService), hapus di sini
   // PropertiesService.getUserProperties().deleteAllProperties();
-  
+
   // Fungsi ini tidak wajib mengembalikan data, 
   // yang penting fungsi ini ADA agar tidak muncul error "is not a function"
-  return true; 
+  return true;
 }
 
 /**
@@ -764,7 +794,7 @@ function getPenjualanReport(startDate, endDate) {
   });
 
   // sort by qty desc (top terlaris)
-  topProducts.sort((a,b) => (b.qty - a.qty));
+  topProducts.sort((a, b) => (b.qty - a.qty));
 
   return {
     txCount: txCount,
@@ -804,7 +834,7 @@ function getSpreadsheet() {
     Logger.log('ENV yang terdeteksi: ' + env);
 
     var ssId;
-    
+
     if (env === 'production') {
       ssId = props.getProperty('SS_ID_PROD') || '17nWhZx32MhOWI6OnADqisHwjsmAYrBug4-rRT_CjUJQ';
     } else {
