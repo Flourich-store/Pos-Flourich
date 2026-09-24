@@ -105,7 +105,9 @@ function createGasMock() {
   const PropertiesService = {
     getScriptProperties: () => ({
       getProperty: (k) => (k in scriptRuntime.props ? scriptRuntime.props[k] : null),
-      setProperty: (k, v) => { scriptRuntime.props[k] = String(v); }
+      setProperty: (k, v) => { scriptRuntime.props[k] = String(v); },
+      getProperties: () => Object.assign({}, scriptRuntime.props),
+      deleteProperty: (k) => { delete scriptRuntime.props[k]; }
     })
   };
 

@@ -613,6 +613,8 @@
       grid-template-columns: 1.05fr 1fr;
       gap: 20px;
       align-items: start;
+      /* Transisi lembut saat data berubah di latar belakang (tanpa kedip) */
+      transition: opacity 0.25s ease;
     }
 
     /* Kunci anti-mebar: tanpa ini, min-content tabel lebar (riwayat/stok)
@@ -1113,6 +1115,16 @@
       max-width: 400px;
       margin: 0 auto;
       color: var(--ink);
+    }
+
+    /* ---- Struk: animasi muncul halus (terasa cepat & elegan) ---- */
+    .modal-box .receipt-container {
+      animation: receiptIn 0.28s ease both;
+    }
+
+    @keyframes receiptIn {
+      from { opacity: 0; transform: translateY(14px) scale(0.98); }
+      to { opacity: 1; transform: translateY(0) scale(1); }
     }
 
     /* Kepala struk: pita brand dengan logo */
@@ -1874,8 +1886,28 @@
         pesan.indexOf('Koneksi ke server tidak tersedia') === 0;
     }
 
-    async function apiRequest(action, args = [], koneksiId = null) {
+    async function apiRequest(action, args = [], koneksiId = null, trueSync = false) {
       let kegagalanTerakhir = null;
+
+      // Cache pendek (3 detik) untuk aksi BACA berulang: sync 10 detik dari banyak
+      // perangkat + refresh setelah aksi menulis bisa menumpuk request getInitialData
+      // yang identik. Jawaban cache instan = UI tetap segar tanpa beban server.
+      // trueSync = lewati cache (dipakai saat data HARUS segar, mis. stok setelah checkout).
+      const isBaca = action === 'getInitialData';
+      const kunciCache = 'getInitialData';
+      if (isBaca && !trueSync) {
+        const cachedRaw = sessionStorage.getItem('pos_api_cache_' + kunciCache);
+        if (cachedRaw) {
+          try {
+            const cached = JSON.parse(cachedRaw);
+            if (Date.now() - cached.t < 3000) {
+              console.log('[POS API] memakai cache pendek', action);
+              return cached.v;
+            }
+          } catch (e) { }
+        }
+      }
+
       const bodyPayload = {
         action: action,
         args: Array.isArray(args) ? args : [args]
@@ -1923,6 +1955,10 @@
             throw { __bisnis: true, error: new Error(payload.message || 'Permintaan ke server gagal.') };
           }
 
+          // Simpan ke cache pendek (hanya aksi baca) untuk request identik berikutnya
+          if (isBaca) {
+            try { sessionStorage.setItem('pos_api_cache_' + kunciCache, JSON.stringify({ t: Date.now(), v: payload.data !== undefined ? payload.data : payload })); } catch (e) { }
+          }
           return payload.data !== undefined ? payload.data : payload;
         } catch (error) {
           if (error && error.__bisnis) {
@@ -1946,7 +1982,8 @@
       if (kegagalanTerakhir && AKSI_BACA_LEWAT_GET[action]) {
         try {
           console.warn('[POS API] fallback ke GET untuk', action);
-          const urlGet = API_URL + '?action=' + encodeURIComponent(action) + '&args=' + encodeURIComponent(JSON.stringify(Array.isArray(args) ? args : [args])) + (koneksiId ? '&koneksiId=' + encodeURIComponent(koneksiId) : '');
+          const argsUntukUrl = (action === 'getInitialData') ? [60] : args;
+          const urlGet = API_URL + '?action=' + encodeURIComponent(action) + '&args=' + encodeURIComponent(JSON.stringify(Array.isArray(argsUntukUrl) ? argsUntukUrl : [argsUntukUrl])) + (koneksiId ? '&koneksiId=' + encodeURIComponent(koneksiId) : '');
           const response = await fetchDenganTimeout(urlGet, { method: 'GET', headers: { 'Accept': 'application/json' } });
           const text = await response.text();
           if (!text || String(text).trim().charAt(0) === '<') {
@@ -2058,9 +2095,10 @@
         perbaruiIndikatorAntrian();
       }
 
-      // Ada yang baru terkirim -> tarik data terbaru dari server agar riwayat
-      // & stok di layar mencerminkan transaksi yang barusan masuk.
-      refreshData(true);
+      // Ada yang baru terkirim -> tarik data TERBARU dari server agar riwayat
+      // & stok di layar mencerminkan transaksi yang barusan masuk (trueSync:
+      // jangan pakai cache pendek, data transaksi baru wajib muncul).
+      refreshData(true, true);
     }
 
     function jadwalkanKirimAntrianOffline(delayMs) {
@@ -2187,7 +2225,7 @@
       }
     }
 
-    function safeGoogleRun(methodName, args, successHandler, failureHandler, koneksiId) {
+    function safeGoogleRun(methodName, args, successHandler, failureHandler, koneksiId, trueSync) {
       const fallbackMessage = 'Koneksi ke server tidak tersedia. Buka aplikasi dari URL Google Apps Script.';
 
       if (window.location.protocol === 'file:') {
@@ -2207,8 +2245,9 @@
 
       (async () => {
         try {
-          // koneksiId diteruskan ke apiRequest sebagai kunci idempotensi
-          const result = await apiRequest(methodName, args, koneksiId);
+          // koneksiId diteruskan ke apiRequest sebagai kunci idempotensi.
+          // trueSync = data harus segar dari server (lewati cache pendek).
+          const result = await apiRequest(methodName, args, koneksiId, trueSync);
           if (successHandler) successHandler(result);
         } catch (error) {
           const msg = error && error.message ? error.message : fallbackMessage;
@@ -2314,11 +2353,14 @@
 
     function startRealtimeSync() {
       stopRealtimeSync();
+      // Sinkronisasi berkala: setiap 45 detik + tulis minimal 4 detik antar-refresh.
+      // (Dulu 10 detik penuh fetch 45KB -> boros kuota & sering bertabrakan dengan
+      // interaksi kasir; data tetap segar karena tiap checkout/stok langsung sync.)
       realtimeTimer = setInterval(() => {
         // Ambil data TERBARU dari server (bukan cache lama) agar stok multi-perangkat
         // tetap sinkron tanpa refresh halaman.
-        refreshData(true);
-      }, 10000);
+        refreshData(true, true);
+      }, 45000);
     }
 
     function stopRealtimeSync() {
@@ -2540,9 +2582,11 @@
       if (jumlahAntrianTertunda() > 0) jadwalkanKirimAntrianOffline(1500);
     }
 
-    // Eksekusi API HANYA SATU KALI saat halaman selesai dimuat
+    // Eksekusi API HANYA SATU KALI saat halaman selesai dimuat.
+    // Argumen ke-2 = limit riwayat: 60 transaksi terbaru cukup untuk layar POS;
+    // payload kecil = data awal tampil jauh lebih cepat (dulu 490+ baris penuh).
     document.addEventListener('DOMContentLoaded', function () {
-      safeGoogleRun('getInitialData', [], result => {
+      safeGoogleRun('getInitialData', [60], result => {
         simpanDanRenderData(result);
       }, err => {
         console.error("Gagal memuat data awal dari server:", err);
@@ -2606,10 +2650,10 @@
     // Dipakai setelah checkout/tambah stok sukses & oleh sinkronisasi berkala agar
     // stok di layar langsung berubah tanpa perlu refresh halaman.
     let isRefreshingData = false;
-    function refreshData(silent) {
+    function refreshData(silent, trueSync) {
       if (isRefreshingData) return; // cegah request menumpuk
       isRefreshingData = true;
-      safeGoogleRun('getInitialData', [], result => {
+      safeGoogleRun('getInitialData', [60], result => {
         isRefreshingData = false;
         simpanDanRenderData(result);
       }, err => {
@@ -2618,7 +2662,7 @@
         if (!silent) {
           alert('Gagal memuat data terbaru: ' + (err && err.message ? err.message : err));
         }
-      });
+      }, undefined, trueSync);
     }
 
     // Optimistic update: ubah stok satu produk di data lokal + cache SEKETIKA,
@@ -2682,8 +2726,10 @@
         const sukses = typeof msg === 'string' && /berhasil/i.test(msg);
         if (!sukses) return; // alert di atas sudah menyampaikan penolakan server
         // Stok bertambah SEKETIKA di layar, lalu disegarkan dengan data server
+        // terbaru (trueSync: lewati cache pendek agar optimistic update tidak
+        // tertimpa data cache yang lebih lama).
         terapkanPerubahanStokLokal(id, qty);
-        refreshData(true);
+        refreshData(true, true);
       }, err => {
         console.error(err);
         alert('Gagal menambah stok.');
@@ -2976,6 +3022,9 @@
       safeGoogleRun('prosesCheckout', [cart, metode, uangDibayar], function (res) {
         if (res.status === 'success') {
           const itemsTerjual = Array.isArray(cart) ? cart.slice() : [];
+          // Struk muncul SEKETIKA dari data hasil checkout server — TANPA menunggu
+          // refresh data (dulu struk baru tampil setelah getInitialData selesai,
+          // bisa belasan detik). Sinkronisasi riwayat berjalan di latar belakang.
           showSuccessModal(res);
           cart = [];
           renderCart();
@@ -2983,13 +3032,13 @@
           document.getElementById('inpQty').value = 1;
           document.getElementById('kembalianBox').innerHTML = 'Uang Kembali : Rp 0';
 
-          // Logika stok langsung berkurang: kurangi stok lokal SEKETIKA
-          // berdasarkan item yang baru terjual, lalu ambil data terbaru dari server
-          // sebagai konfirmasi (tanpa perlu refresh halaman).
+          // Stok langsung berkurang di layar SEKETIKA (optimistic), TANPA menunggu
+          // server. refreshData(TRUE_SYNC) di latar belakang mengambil data valid;
+          // bila server berbeda (kasus langka), angka ikut disesuaikan otomatis.
           itemsTerjual.forEach(function (it) {
             terapkanPerubahanStokLokal(it.id, -Number(it.jumlah || 0));
           });
-          refreshData(true);
+          refreshData(true, true);
         } else {
           alert('Gagal : ' + res.message);
         }

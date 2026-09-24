@@ -435,9 +435,15 @@ function getPenjualanData() {
  * Mengurangi jumlah google.script.run dari 2 menjadi 1.
  * ============================================================
  */
-function getInitialData() {
+function getInitialData(limitPenjualan) {
   const ss = getSpreadsheet();
   const timezone = ss.getSpreadsheetTimeZone();
+
+  // Batasi jumlah baris riwayat yang dikirim ke klien (baris TERBARU dulu).
+  // Riwayat penuh (bisa ribuan baris) membuat payload membengkak & refresh lambat;
+  // POS hanya menampilkan halaman terbaru di layar.
+  limitPenjualan = Number(limitPenjualan);
+  if (!Number.isFinite(limitPenjualan) || limitPenjualan <= 0) limitPenjualan = 60;
 
   // ─── 1. PRODUK DATA (batch getValues) ───
   const shProduk = ss.getSheetByName("Produk");
@@ -447,8 +453,17 @@ function getInitialData() {
     const dataProduk = shProduk.getDataRange().getValues();
 
     if (dataProduk.length > 0) {
-      // Ambil daftar foto dari Google Drive secara otomatis (satu kali)
-      const photoList = getDrivePhotoList();
+      // Fast path: jika SEMUA produk sudah punya foto_url tersimpan, JANGAN panggil
+      // DriveApp (bisa 3-10 detik per pemanggilan). Pencocokan Drive hanya perlu
+      // dilakukan saat ada produk dengan foto kosong (produk baru). Satu pengecualian:
+      // jika ada foto_url kosong tapi tidak ada teks sel, tetap jalankan fast path
+      // tanpa menulis (kondisi "belum terisi" ditandai string kosong di kolom E).
+      let perluCocokkanDrive = false;
+      for (let i = 1; i < dataProduk.length; i++) {
+        if (!String(dataProduk[i][4] || '').trim()) { perluCocokkanDrive = true; break; }
+      }
+
+      const photoList = perluCocokkanDrive ? getDrivePhotoList() : [];
       let photoColUpdate = [["foto_url"]];
       let needsUpdate = false;
 
@@ -465,12 +480,14 @@ function getInitialData() {
         const harga = Number(row[3] || 0);
         let fotoUrl = String(row[4] || '').trim();
 
-        // Cocokkan foto dari Google Drive berdasarkan Nama Produk
-        const matchedDriveUrl = matchPhotoForProduct(id, nama, photoList);
-        if (matchedDriveUrl) {
-          fotoUrl = matchedDriveUrl;
-          if (!row[4]) {
-            needsUpdate = true; // Tandai jika ada sel yang butuh diupdate
+        // Cocokkan foto dari Google Drive hanya bila ada foto yang belum terisi
+        if (perluCocokkanDrive) {
+          const matchedDriveUrl = matchPhotoForProduct(id, nama, photoList);
+          if (matchedDriveUrl) {
+            fotoUrl = matchedDriveUrl;
+            if (!row[4]) {
+              needsUpdate = true; // Tandai jika ada sel yang butuh diupdate
+            }
           }
         }
 
@@ -496,10 +513,16 @@ function getInitialData() {
     const lastRow = shPenjualan.getLastRow();
 
     if (lastRow > 1) {
-      const dataJual = shPenjualan.getRange(1, 1, lastRow, 11).getValues();
+      // Baca HANYA jendela baris terbaru (terakhir `limitPenjualan` baris + header),
+      // bukan seluruh sheet — baris 490+ per refresh memperlambat payload & respons.
+      const jumlahBaris = Math.min(lastRow, limitPenjualan + 1);
+      const barisAwal = lastRow - jumlahBaris + 1;
+      const dataJual = shPenjualan.getRange(barisAwal, 1, jumlahBaris, 11).getValues();
 
       penjualanResult = [];
-      penjualanResult.push(dataJual[0]);
+      // Jendela yang dibaca belum tentu memuat baris header (barisAwal > 1),
+      // jadi pakai definisi header statis.
+      penjualanResult.push(penjualanHeader);
 
       for (let i = 1; i < dataJual.length; i++) {
         const row = dataJual[i];
@@ -660,32 +683,66 @@ function prosesCheckout(cart, metode, uangDibayar, requestData) {
       }
     }
 
-    for (const item of validatedItems) {
-      const totalModal = item.modalSatuan * item.jumlah;
-      const biayaOperasional = 0;
-      const labaBersih = item.totalHarga - totalModal - biayaOperasional;
+    // Tulis semua baris penjualan & update stok sekaligus (batch), bukan per item.
+    // appendRow/setValue per item = puluhan panggilan sheet -> checkout terasa lambat;
+    // 2 operasi tulis batch (setValues) jauh lebih cepat & atomik.
+    if (validatedItems.length > 0) {
+      const barisPenjualan = validatedItems.map(item => {
+        const totalModal = item.modalSatuan * item.jumlah;
+        const biayaOperasional = 0;
+        const labaBersih = item.totalHarga - totalModal - biayaOperasional;
+        return [
+          transaksi,
+          tanggal,
+          item.nama,
+          item.jumlah,
+          item.totalHarga,
+          metode,
+          finalBayar,
+          uangKembali,
+          totalModal,
+          biayaOperasional,
+          labaBersih
+        ];
+      });
 
-      shPenjualan.appendRow([
-        transaksi,
-        tanggal,
-        item.nama,
-        item.jumlah,
-        item.totalHarga,
-        metode,
-        finalBayar,
-        uangKembali,
-        totalModal,
-        biayaOperasional,
-        labaBersih
-      ]);
+      // Batch penjualan: semua item dalam SATU setValues setelah baris terakhir.
+      const lastRowJual = shPenjualan.getLastRow();
+      shPenjualan
+        .getRange(lastRowJual + 1, 1, barisPenjualan.length, barisPenjualan[0].length)
+        .setValues(barisPenjualan);
 
-      const produkindex = Array.isArray(dataProduk)
-        ? dataProduk.findIndex(row => String(row[0] || '').trim() === item.id)
-        : -1;
-      if (produkindex > 0) {
-        const stokBaru = Number(dataProduk[produkindex][2] || 0) - item.jumlah;
-        dataProduk[produkindex][2] = stokBaru;
-        shProduk.getRange(produkindex + 1, 3).setValue(stokBaru);
+      // Batch stok: agregasi pengurangan per produk dulu (produk yang sama bisa
+      // muncul beberapa kali di cart), lalu tulis setiap baris TEPAT SEKALI.
+      const penguranganPerIdx = new Map(); // produkindex (0-based) -> total qty
+      for (const item of validatedItems) {
+        const pIdx = Array.isArray(dataProduk)
+          ? dataProduk.findIndex(row => String(row[0] || '').trim() === item.id)
+          : -1;
+        if (pIdx > 0) {
+          penguranganPerIdx.set(pIdx, (penguranganPerIdx.get(pIdx) || 0) + item.jumlah);
+        }
+      }
+      // Urutkan berdasarkan baris sheet agar rentang berurutan bisa digabung
+      // menjadi SATU operasi setValues (umumnya hanya 1-2 rentang per transaksi).
+      const entriStok = Array.from(penguranganPerIdx.entries()).sort((a, b) => a[0] - b[0]);
+      if (entriStok.length > 0) {
+        const indeksStok = entriStok.map(e => e[0] + 1); // nomor baris sheet (1-based)
+        const nilaiStok = entriStok.map(e => {
+          const stokBaru = Number(dataProduk[e[0]][2] || 0) - e[1];
+          dataProduk[e[0]][2] = stokBaru;
+          return [stokBaru];
+        });
+        let k = 0;
+        while (k < indeksStok.length) {
+          let m = k;
+          while (m + 1 < indeksStok.length && indeksStok[m + 1] === indeksStok[m] + 1) m++;
+          const jumlahBaris = m - k + 1;
+          shProduk
+            .getRange(indeksStok[k], 3, jumlahBaris, 1)
+            .setValues(nilaiStok.slice(k, m + 1));
+          k = m + 1;
+        }
       }
     }
 
@@ -702,7 +759,9 @@ function prosesCheckout(cart, metode, uangDibayar, requestData) {
     // ini titik aman: respons hilang di jalan pun, kirim ulang tidak dobel-catat.
     if (koneksiId) {
       try {
-        PropertiesService.getScriptProperties().setProperty('idem_' + koneksiId, JSON.stringify(hasilSukses));
+        const props = PropertiesService.getScriptProperties();
+        props.setProperty('idem_' + koneksiId, JSON.stringify(hasilSukses));
+        bersihkanKunciIdempotensiTua(props);
       } catch (idemErr) {
         Logger.log("prosesCheckout: gagal simpan idempotensi (transaksi tetap sah): " + idemErr);
       }
@@ -715,6 +774,32 @@ function prosesCheckout(cart, metode, uangDibayar, requestData) {
       status: "error",
       message: "Error sistem: " + err.toString()
     };
+  }
+}
+
+/**
+ * Pembersih kunci idempotensi tua. PropertiesService di GAS punya batas total
+ * (~9KB/properti, 500KB total) — biarkan menumpuk lama-lama memperlambat & bisa
+ * penuh. Kunci dianggap kedaluwarsa setelah 24 jam (jendela aman kirim ulang
+ * antrian offline; lewat dari itu, transaksi pasti sudah tersinkron).
+ */
+function bersihkanKunciIdempotensiTua(props) {
+  try {
+    const TTL_MS = 24 * 60 * 60 * 1000;
+    const semua = props.getProperties();
+    const kunciTua = [];
+    for (const kunci in semua) {
+      if (kunci.indexOf('idem_') !== 0) continue;
+      try {
+        const isi = JSON.parse(semua[kunci]);
+        // hasilSukses tidak menyimpan waktu — bandingkan lewat ID transaksi FR-<ms>
+        const ms = parseInt(String(isi && isi.transaksi || '').replace('FR-', ''), 10);
+        if (Number.isFinite(ms) && (Date.now() - ms) > TTL_MS) kunciTua.push(kunci);
+      } catch (e) { kunciTua.push(kunci); } // isi korup = aman dibuang
+    }
+    for (let i = 0; i < kunciTua.length; i++) props.deleteProperty(kunciTua[i]);
+  } catch (e) {
+    Logger.log("bersihkanKunciIdempotensiTua: " + e);
   }
 }
 
