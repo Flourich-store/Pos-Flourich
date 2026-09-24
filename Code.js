@@ -22,10 +22,10 @@ function doGet(e) {
       if (AKSI_TULIS.indexOf(action) !== -1) {
         throw new Error('Aksi "' + action + '" hanya diizinkan lewat POST (keamanan transaksi).');
       }
-      const requestData = {
+      const requestData = sisipkanKoneksiIdDariQuery({
         action: action,
         args: params.args ? JSON.parse(params.args) : []
-      };
+      }, e);
       return ContentService.createTextOutput(JSON.stringify(eksekusiAksi(requestData)))
         .setMimeType(ContentService.MimeType.JSON);
     } catch (error) {
@@ -48,9 +48,24 @@ function doGet(e) {
 // (prosesCheckout, tambahStokProduk, dsb.) WAJIB lewat POST.
 const AKSI_TULIS = ['prosesCheckout', 'tambahStokProduk'];
 
+// Ambil koneksiId dari payload frontend (idempotensi transaksi offline).
+// Nilai dibersihkan: dibatasi 100 karakter, hanya alfanumerik + '-' + '_'.
+// (Bukan sanitasi keamanan — spreadsheet menerima string apa pun — melainkan
+// normalisasi agar kunci idempotensi konsisten.)
+function ambilKoneksiId(requestData) {
+  const raw = requestData && requestData.koneksiId != null ? String(requestData.koneksiId) : '';
+  // Bersihkan DULU baru potong, agar dua varian input yang "setara" selalu
+  // menghasilkan kunci idempotensi yang identik.
+  const bersih = raw.trim().replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 100);
+  return bersih || null;
+}
+
 function eksekusiAksi(requestData) {
   const action = String(requestData.action || '').trim();
   const args = Array.isArray(requestData.args) ? requestData.args : [];
+
+  // koneksiId tidak pernah sampai ke fungsi backend — dipakai khusus oleh
+  // prosesCheckout untuk idempotensi, diambil via ambilKoneksiId(requestData).
 
   if (!action) {
     throw new Error('Action tidak ditemukan.');
@@ -64,17 +79,33 @@ function eksekusiAksi(requestData) {
     if (typeof backendFunction !== 'function') {
       throw new Error('Fungsi ' + action + ' tidak tersedia.');
     }
-    result = backendFunction.apply(null, args);
+    // prosesCheckout menerima requestData sebagai argumen ke-4 (koneksiId untuk
+    // idempotensi antrian offline). Aksi lain tidak berubah.
+    if (action === 'prosesCheckout') {
+      result = backendFunction.apply(null, args.concat([requestData]));
+    } else {
+      result = backendFunction.apply(null, args);
+    }
   }
 
   return result;
+}
+
+// Salin koneksiId dari query string (?koneksiId=...) ke requestData sebelum
+// diteruskan ke eksekusiAksi, agar idempotensi juga bekerja di jalur GET.
+function sisipkanKoneksiIdDariQuery(requestData, e) {
+  const dariQuery = e && e.parameter && e.parameter.koneksiId;
+  if (dariQuery && !requestData.koneksiId) {
+    requestData.koneksiId = String(dariQuery);
+  }
+  return requestData;
 }
 
 function doPost(e) {
   try {
     const rawBody = e && e.postData && e.postData.contents ? e.postData.contents : '{}';
     const requestData = JSON.parse(rawBody);
-    return ContentService.createTextOutput(JSON.stringify(eksekusiAksi(requestData)))
+    return ContentService.createTextOutput(JSON.stringify(eksekusiAksi(sisipkanKoneksiIdDariQuery(requestData, e))))
       .setMimeType(ContentService.MimeType.JSON);
   } catch (error) {
     return ContentService.createTextOutput(JSON.stringify({
@@ -300,9 +331,14 @@ function tambahStokProduk(idProduk, qtyTambah, role) {
 
   const data = sheet.getDataRange().getValues();
 
+  if (!Array.isArray(data) || data.length < 2) {
+    return "Data produk tidak terbaca dari sheet.";
+  }
+
   for (let i = 1; i < data.length; i++) {
 
-    if (String(data[i][0]) === String(idProduk)) {
+    // trim() agar ID dengan spasi tak sengaja tetap cocok
+    if (String(data[i][0]).trim() === String(idProduk).trim()) {
 
       let stok = Number(data[i][2]);
       stok += qtyTambah;
@@ -504,7 +540,7 @@ function getInitialData() {
 /**
  * Checkout
  */
-function prosesCheckout(cart, metode, uangDibayar) {
+function prosesCheckout(cart, metode, uangDibayar, requestData) {
   try {
     if (!Array.isArray(cart) || cart.length === 0) {
       return { status: "error", message: "Keranjang masih kosong." };
@@ -591,6 +627,23 @@ function prosesCheckout(cart, metode, uangDibayar) {
       });
     }
 
+    // Idempotensi antrian offline: bawaan frontend berupa koneksiId unik per tekanan
+    // tombol. Kalau koneksi putus SETELAH server mencatat transaksi (respon tidak
+    // sampai ke kasir), pengiriman ulang dari antrian lokal TIDAK boleh dobel-catat.
+    const koneksiId = requestData ? ambilKoneksiId(requestData) : null;
+    if (koneksiId) {
+      try {
+        const props = PropertiesService.getScriptProperties();
+        const tercatat = props.getProperty('idem_' + koneksiId);
+        if (tercatat) {
+          Logger.log("prosesCheckout: koneksiId " + koneksiId + " sudah pernah diproses (transaksi " + tercatat + "), kirim ulang hasil lama.");
+          return JSON.parse(tercatat);
+        }
+      } catch (idemErr) {
+        Logger.log("prosesCheckout: gagal cek idempotensi (lanjut normal): " + idemErr);
+      }
+    }
+
     const transaksi = "FR-" + new Date().getTime();
     const tanggal = new Date();
     let uangKembali = 0;
@@ -636,7 +689,7 @@ function prosesCheckout(cart, metode, uangDibayar) {
       }
     }
 
-    return {
+    const hasilSukses = {
       status: "success",
       transaksi: transaksi,
       total: grandTotal,
@@ -644,6 +697,18 @@ function prosesCheckout(cart, metode, uangDibayar) {
       kembali: uangKembali,
       metode: metode
     };
+
+    // Simpan hasil sukses sebagai tanda idempotensi SEBELUM respons dikirim —
+    // ini titik aman: respons hilang di jalan pun, kirim ulang tidak dobel-catat.
+    if (koneksiId) {
+      try {
+        PropertiesService.getScriptProperties().setProperty('idem_' + koneksiId, JSON.stringify(hasilSukses));
+      } catch (idemErr) {
+        Logger.log("prosesCheckout: gagal simpan idempotensi (transaksi tetap sah): " + idemErr);
+      }
+    }
+
+    return hasilSukses;
 
   } catch (err) {
     return {

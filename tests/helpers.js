@@ -172,6 +172,7 @@ function loadBackend(gas) {
   return {
     sandbox: sandbox,
     prosesCheckout: sandbox.prosesCheckout,
+    tambahStokProduk: sandbox.tambahStokProduk,
     checkLogin: sandbox.checkLogin,
     getProdukData: sandbox.getProdukData,
     getPenjualanData: sandbox.getPenjualanData,
@@ -225,7 +226,12 @@ function createDomStub() {
   ].forEach(id => { elements[id] = makeElem(id); });
 
   const doc = {
-    getElementById: (id) => (id in elements ? elements[id] : makeElem(id)),
+    getElementById: (id) => {
+      // Elemen ad-hoc DI-CACHE agar setiap getElementById(id) mengembalikan
+      // objek yang sama (perilaku DOM asli) — penting untuk badge antrian dll.
+      if (!(id in elements)) elements[id] = makeElem(id);
+      return elements[id];
+    },
     querySelector: () => makeElem('tbody-stub'),
     addEventListener: (type, fn) => { (listeners['document:' + type] = listeners['document:' + type] || []).push(fn); },
     activeElement: null,

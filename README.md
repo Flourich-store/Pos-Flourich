@@ -17,6 +17,8 @@ node tests/frontend.test.js
 node tests/frontend_stok.test.js
 node tests/frontend_login.test.js
 node tests/frontend_jaringan.test.js
+node tests/frontend_antrian.test.js
+node tests/audit_input.test.js
 ```
 
 ### Cakupan pengujian
@@ -61,6 +63,33 @@ node tests/frontend_jaringan.test.js
   di-retry; error bisnis (stok kurang, dsb.) tampil apa adanya tanpa retry; pesan
   akhir menenangkan (transaksi belum tercatat, keranjang aman).
 
+**Antrian transaksi offline (`tests/frontend_antrian.test.js`) — 21 kasus:**
+- Jaringan putus saat checkout → transaksi masuk **antrian lokal** (localStorage,
+  maks 50), struk lokal ber-ID `FR-OFF-...` tetap tercetak, keranjang aman, dan
+  badge indikator di header menampilkan jumlah transaksi tertunda.
+- Setiap percobaan checkout diberi `koneksiId` unik → kirim ulang memakai
+  koneksiId yang **sama** → **idempotensi**: backend tidak pernah dobel-catat
+  (Penjualan tetap 1 baris, stok tetap berkurang sekali).
+- Kirim ulang otomatis saat koneksi pulih (event `online`, sukses refresh data,
+  login) + error bisnis saat kirim ulang dikeluarkan dari antrian (bukan loop
+  abadi); retry jaringan dibatasi 8x per item; antrian korup di-reset aman.
+- Backend: `prosesCheckout` menerima `koneksiId` via POST **maupun** GET; klien
+  lama tanpa koneksiId tetap normal; GET tetap menolak aksi tulis.
+
+**Audit jalur input — stok & penjualan (`tests/audit_input.test.js`) — 16 kasus:**
+- **Backend `tambahStokProduk`**: sukses (stok sheet bertambah), ID dengan spasi
+  tetap cocok (trim), penolakan qty 0/negatif/non-angka, ID tidak ditemukan,
+  role tanpa akses, sheet Produk kosong/rusak — semua balas teks, tanpa crash.
+- **UI `aksiTambahStok` via jalur HTTPS** (fetch stub → `doPost` backend sungguhan):
+  stok di layar langsung bertambah saat server konfirmasi; **regresi bug stok-palsu** —
+  server menolak (ID salah) → alert penolakan tampil tapi stok di layar **tidak**
+  bertambah; guard qty tidak valid di frontend; prompt dibatalkan → tanpa request;
+  role tanpa akses diblokir sebelum prompt qty.
+- **Rantai penjualan ujung-ke-ujung** (UI → `doPost` → mock spreadsheet): addToCart
+  & updateCartQty menolak qty melebihi stok; checkout gagal stok → keranjang aman
+  & tidak masuk antrian offline; checkout sukses → Penjualan tercatat 1 baris +
+  stok sheet berkurang; uang kurang ditolak konsisten oleh frontend & backend.
+
 ### Struktur berkas pengujian
 
 ```
@@ -70,5 +99,7 @@ tests/
 ├── frontend.test.js            # Suite frontend (index.html)
 ├── frontend_stok.test.js       # Regresi stok langsung berubah di UI
 ├── frontend_login.test.js      # Regresi stok tampil setelah login
-└── frontend_jaringan.test.js   # Regresi ketahanan jaringan (retry + fallback GET)
+├── frontend_jaringan.test.js   # Regresi ketahanan jaringan (retry + fallback GET)
+├── frontend_antrian.test.js    # Regresi antrian transaksi offline + idempotensi
+└── audit_input.test.js         # Audit jalur input stok & penjualan (uji perbaikan bug)
 ```
