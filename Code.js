@@ -118,10 +118,15 @@ function doPost(e) {
 
 /**
  * Login POS
+ * OPTIMASI: login sukses SEKALIGUS mengembalikan data awal (produk + penjualan
+ * terbaru) dalam respons yang sama — frontend tidak perlu roundtrip kedua
+ * (getInitialData) yang menambah satu kali overhead HTTP/cold start Apps Script
+ * (bisa belasan detik di jaringan lambat).
  */
 function checkLogin(username, password) {
 
-  const sheet = getSpreadsheet().getSheetByName("User");
+  const ss = getSpreadsheet();
+  const sheet = ss.getSheetByName("User");
 
   if (!sheet) return { status: false, message: "Sheet User tidak ditemukan" };
 
@@ -136,10 +141,20 @@ function checkLogin(username, password) {
       user === String(username).trim() &&
       pass === String(password).trim()
     ) {
+      // Data awal ikut dalam respons login = 1 roundtrip (bukan 2).
+      // Bila gagal (sheet bermasalah), kirim tanpa dataAwal — frontend
+      // otomatis memakai jalur getInitialData terpisah.
+      let dataAwal = null;
+      try {
+        dataAwal = getInitialData(60);
+      } catch (dataErr) {
+        Logger.log("checkLogin: gagal memuat data awal (frontend akan fallback): " + dataErr);
+      }
       return {
         status: true,
         username: user,
-        role: data[i][2] || "KASIR"
+        role: data[i][2] || "KASIR",
+        dataAwal: dataAwal
       };
     }
 
@@ -604,13 +619,12 @@ function prosesCheckout(cart, metode, uangDibayar, requestData) {
     }
 
     // Harga satuan & modal diambil dari data produk via Map (O(1) per item).
-    // TANPA validasi & TANPA pengurangan stok: stok dikelola MANUAL via fitur
-    // Tambah Stok. Checkout murni pencatatan penjualan -> tulis sheet minimal
-    // (1 setValues penjualan) = tercepat.
-    const hargaPerId = new Map();
+    // TANPA validasi stok (stok dikelola manual): penjualan tidak diblokir
+    // meski angka stok di sheet basi. Stok tetap DIKURANGI di akhir proses.
+    const indeksPerId = new Map(); // id produk -> indeks baris di dataProduk
     for (let i = 1; i < dataProduk.length; i++) {
       const kunci = String(dataProduk[i][0] || '').trim();
-      if (kunci) hargaPerId.set(kunci, dataProduk[i]);
+      if (kunci) indeksPerId.set(kunci, i);
     }
 
     let grandTotal = 0;
@@ -629,10 +643,11 @@ function prosesCheckout(cart, metode, uangDibayar, requestData) {
         return { status: "error", message: "Jumlah item harus lebih dari 0." };
       }
 
-      const produk = hargaPerId.get(itemId);
-      if (!produk) {
+      const idx = indeksPerId.get(itemId);
+      if (idx === undefined) {
         return { status: "error", message: "Produk ID " + itemId + " tidak ditemukan." };
       }
+      const produk = dataProduk[idx];
 
       const hargaSatuan = Number(produk[3] || 0);
       const totalHargaItem = hargaSatuan * jumlah;
@@ -708,11 +723,42 @@ function prosesCheckout(cart, metode, uangDibayar, requestData) {
       });
 
       // Batch penjualan: semua item dalam SATU setValues setelah baris terakhir.
-      // Stok TIDAK ditulis di sini — dikelola manual via fitur Tambah Stok.
       const lastRowJual = shPenjualan.getLastRow();
       shPenjualan
         .getRange(lastRowJual + 1, 1, barisPenjualan.length, barisPenjualan[0].length)
         .setValues(barisPenjualan);
+
+      // Stok ikut berkurang: agregasi qty per produk dulu (produk sama bisa
+      // muncul beberapa kali di cart), lalu tulis setiap baris TEPAT SEKALI.
+      // Rentang baris berurutan digabung menjadi SATU setValues — tanpa
+      // validasi stok (stok manual): tidak memblokir penjualan.
+      const penguranganPerBaris = new Map(); // nomor baris sheet (1-based) -> total qty
+      for (const item of validatedItems) {
+        const idx = indeksPerId.get(item.id);
+        if (idx !== undefined) {
+          const baris = idx + 1; // 0-based -> 1-based
+          penguranganPerBaris.set(baris, (penguranganPerBaris.get(baris) || 0) + item.jumlah);
+        }
+      }
+      const entriStok = Array.from(penguranganPerBaris.entries()).sort((a, b) => a[0] - b[0]);
+      if (entriStok.length > 0) {
+        const indeksStok = entriStok.map(e => e[0]);
+        const nilaiStok = entriStok.map(e => {
+          const stokBaru = Number(dataProduk[e[0] - 1][2] || 0) - e[1];
+          dataProduk[e[0] - 1][2] = stokBaru;
+          return [stokBaru];
+        });
+        let k = 0;
+        while (k < indeksStok.length) {
+          let m = k;
+          while (m + 1 < indeksStok.length && indeksStok[m + 1] === indeksStok[m] + 1) m++;
+          const jumlahBaris = m - k + 1;
+          shProduk
+            .getRange(indeksStok[k], 3, jumlahBaris, 1)
+            .setValues(nilaiStok.slice(k, m + 1));
+          k = m + 1;
+        }
+      }
     }
 
     const hasilSukses = {

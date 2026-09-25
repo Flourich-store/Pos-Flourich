@@ -224,7 +224,7 @@ r.suite('Audit Penjualan — rantai UI -> backend', () => {
     r.assertEq(sheet.__penjualan.__rows().length, 1, 'tidak ada transaksi tercatat');
   });
 
-  r.test('checkout sukses ujung-ke-ujung: Penjualan tercatat, stok sheet TIDAK disentuh (stok manual)', async () => {
+  r.test('checkout sukses ujung-ke-ujung: Penjualan tercatat & stok sheet berkurang', async () => {
     const { dom, app, sheet } = muatDenganBackend();
     app.set('dataProduk', produkBaru());
     app.set('masterData', produkBaru());
@@ -238,7 +238,7 @@ r.suite('Audit Penjualan — rantai UI -> backend', () => {
     r.assertOk(dom.alerts.length === 0, 'tidak ada alert error');
     r.assertEq(app.get('cart').length, 0, 'keranjang dikosongkan setelah sukses');
     r.assertEq(sheet.__penjualan.__rows().length, 2, 'Penjualan: header + 1 baris');
-    r.assertEq(Number(sheet.__produk.__rows()[1][2]), 50, 'stok sheet tetap 50 — tidak ditulis checkout');
+    r.assertEq(Number(sheet.__produk.__rows()[1][2]), 48, 'stok sheet 50 -> 48');
   });
 
   r.test('validasi konsisten: frontend & backend sama-sama menolak uang kurang', async () => {

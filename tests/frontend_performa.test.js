@@ -111,9 +111,9 @@ r.suite('Backend — prosesCheckout tulis batch (checkout cepat)', () => {
     r.assertEq(res.status, 'success', 'status sukses');
     r.assertEq(res.total, 59000, 'grand total 30000+14000+15000');
     r.assertEq(spreadsheet.__penjualan.__rows().length, 4, '3 baris penjualan + header');
-    // Stok dikelola manual — checkout murni pencatatan penjualan.
-    r.assertEq(spreadsheet.__produk.__rows()[1][2], 50, 'stok produk 1 tidak disentuh');
-    r.assertEq(spreadsheet.__produk.__rows()[2][2], 30, 'stok produk 2 tidak disentuh');
+    // Produk 1 terjual 3x (2+1, agregasi per produk): 50 -> 47
+    r.assertEq(spreadsheet.__produk.__rows()[1][2], 47, 'stok produk 1 berkurang 3 (agregasi)');
+    r.assertEq(spreadsheet.__produk.__rows()[2][2], 29, 'stok produk 2 berkurang 1');
   });
 
   r.test('checkout QRIS tetap sukses dengan jalur batch', () => {
@@ -123,7 +123,7 @@ r.suite('Backend — prosesCheckout tulis batch (checkout cepat)', () => {
       'QRIS', 0
     );
     r.assertEq(res.status, 'success');
-    r.assertEq(spreadsheet.__produk.__rows()[2][2], 30, 'stok tidak disentuh');
+    r.assertEq(spreadsheet.__produk.__rows()[2][2], 28, 'stok 30 -> 28');
   });
 
   r.test('idempotensi tetap bekerja dengan batch: dobel koneksiId = 1 catatan', () => {
@@ -138,6 +138,35 @@ r.suite('Backend — prosesCheckout tulis batch (checkout cepat)', () => {
     r.assertEq(b.transaksi, a.transaksi, 'kirim ulang memakai hasil asli');
     r.assertEq(spreadsheet.__penjualan.__rows().length, 2, 'tetap 1 baris penjualan');
   });
+});
+
+r.suite('Backend — checkLogin sekaligus bawa data awal (login 1 roundtrip)', () => {
+
+  r.test('login sukses: respons membawa dataAwal (produk + penjualan)', () => {
+    const gas = createGasMock();
+    // User sheet + Produk sheet: createSpreadsheetMock memakai PRODUK_VALID
+    // sebagai produk; user admin/password tersedia di mock.
+    gas.scriptRuntime.activeSpreadsheet = gas.createSpreadsheetMock(PRODUK_VALID);
+    const backend = loadBackend(gas);
+
+    const res = backend.checkLogin('admin', 'password');
+    r.assertEq(res.status, true, 'login sukses');
+    r.assertOk(res.dataAwal, 'respons login membawa dataAwal');
+    r.assertArray(res.dataAwal.produk, 'dataAwal.produk array');
+    r.assertArray(res.dataAwal.penjualan, 'dataAwal.penjualan array');
+    r.assertEq(res.dataAwal.produk.length, 3, 'produk lengkap (header + 2)');
+  });
+
+  r.test('login gagal: tanpa dataAwal', () => {
+    const gas = createGasMock();
+    gas.scriptRuntime.activeSpreadsheet = gas.createSpreadsheetMock(PRODUK_VALID);
+    const backend = loadBackend(gas);
+
+    const res = backend.checkLogin('admin', 'SALAH');
+    r.assertEq(res.status, false, 'login ditolak');
+    r.assertOk(!res.dataAwal, 'tidak ada dataAwal pada login gagal');
+  });
+
 });
 
 r.suite('Backend — pembersih kunci idempotensi tua', () => {

@@ -27,7 +27,7 @@ function setupBackend(spreadsheetOpts, produkRows) {
 
 r.suite('Backend — prosesCheckout (alur normal)', () => {
 
-  r.test('checkout CASH sukses: penjualan tercatat, stok TIDAK disentuh (stok manual)', () => {
+  r.test('checkout CASH sukses: penjualan tercatat & stok berkurang', () => {
     const { gas, backend, spreadsheet } = setupBackend();
 
     const res = backend.prosesCheckout(
@@ -39,8 +39,7 @@ r.suite('Backend — prosesCheckout (alur normal)', () => {
     r.assertEq(res.status, 'success', 'status harus success');
     r.assertEq(res.total, 30000, 'grandTotal');
     r.assertEq(res.kembali, 20000, 'uang kembali');
-    // Stok dikelola MANUAL via Tambah Stok — checkout tidak boleh mengubahnya.
-    r.assertEq(spreadsheet.__produk.__rows()[1][2], 50, 'stok produk 1 TIDAK berubah');
+    r.assertEq(spreadsheet.__produk.__rows()[1][2], 48, 'stok produk 1 berkurang 50->48');
     r.assertEq(spreadsheet.__penjualan.__rows().length, 2, '1 baris penjualan baru');
   });
 
@@ -66,7 +65,7 @@ r.suite('Backend — prosesCheckout (alur normal)', () => {
     r.assertEq(backend.prosesCheckout('bukan-array', 'CASH', 0).status, 'error');
   });
 
-  r.test('stok sheet basi (qty > stok) TETAP diproses — stok dikelola manual', () => {
+  r.test('stok sheet basi (qty > stok) TETAP diproses — stok ikut berkurang tanpa blokir', () => {
     const { backend, spreadsheet } = setupBackend();
 
     const res = backend.prosesCheckout(
@@ -75,11 +74,11 @@ r.suite('Backend — prosesCheckout (alur normal)', () => {
       999 * 15000
     );
 
-    // Tanpa validasi stok di backend: penjualan tercatat apa adanya,
-    // angka stok di sheet tidak pernah ditulis checkout.
+    // Tanpa validasi stok (stok manual): penjualan tetap tercatat dan stok
+    // sheet ikut berkurang (bisa minus) tanpa memblokir transaksi.
     r.assertEq(res.status, 'success', 'checkout murni pencatatan penjualan');
     r.assertEq(spreadsheet.__penjualan.__rows().length, 2, 'penjualan tercatat');
-    r.assertEq(spreadsheet.__produk.__rows()[1][2], 50, 'stok tidak disentuh');
+    r.assertEq(spreadsheet.__produk.__rows()[1][2], 50 - 999, 'stok ikut berkurang (tanpa blokir)');
   });
 
   r.test('uang CASH kurang -> error', () => {

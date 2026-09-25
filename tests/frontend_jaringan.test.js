@@ -138,7 +138,7 @@ r.suite('Backend — doGet fallback GET (aksi baca)', () => {
     const out = backend.doPost({ postData: { contents: body } });
     const payload = JSON.parse(out.getContent());
     r.assertEq(payload.status, 'success', 'checkout via POST sukses');
-    r.assertEq(gas.scriptRuntime.activeSpreadsheet.__produk.__rows()[1][2], 50, 'stok tidak disentuh via POST (stok manual)');
+    r.assertEq(gas.scriptRuntime.activeSpreadsheet.__produk.__rows()[1][2], 48, 'stok berkurang via POST (50 -> 48)');
   });
 
 });

@@ -3,10 +3,12 @@
 /**
  * ============================================================
  * Pengujian lokal — Stok UI & sinkronisasi
- * Stok dikelola MANUAL: checkout TIDAK mengubah stok (backend
- * murni pencatatan penjualan). Suite ini memastikan:
- *   - checkout sukses TIDAK mengubah stok di UI/cache
- *   - stok berubah HANYA lewat Tambah Stok / data server
+ * Checkout mengurangi stok: backend menulis stok batch, frontend
+ * menerapkan optimistic update SEKETIKA pasca-checkout sukses.
+ * Suite ini memastikan:
+ *   - checkout sukses: stok langsung berkurang di UI/cache
+ *   - checkout gagal: stok TIDAK berubah
+ *   - tambah stok manual tetap memperbarui UI seketika
  *   - sinkronisasi berkala memakai data server terbaru
  * ============================================================
  */
@@ -25,13 +27,13 @@ const RESPON_VALID = {
   timestamp: 1
 };
 
-// Balasan server SETELAH checkout: riwayat bertambah, stok tetap (stok manual —
-// checkout tidak mengubah stok di server maupun di klien).
+// Balasan server SETELAH checkout: riwayat bertambah & stok hasil penulisan
+// server (50-2=48, 30-3=27 sesuai skenario uji).
 const RESPON_STOK_BARU = {
   produk: [
     ['id', 'nama', 'stok', 'harga', 'foto_url'],
-    ['1', 'Semangci 250 ml', 50, 15000, ''],
-    ['2', 'Wonapel 250 ml', 30, 14000, '']
+    ['1', 'Semangci 250 ml', 48, 15000, ''],
+    ['2', 'Wonapel 250 ml', 27, 14000, '']
   ],
   penjualan: [
     ['id', 'tanggal', 'namaProduk', 'jumlah', 'totalHarga', 'metode', 'uangDibayar', 'uangKembali'],
@@ -65,18 +67,18 @@ function stokDiCache(dom, id) {
   return row ? Number(row[2]) : undefined;
 }
 
-r.suite('Checkout tidak mengubah stok (stok dikelola manual)', () => {
+r.suite('Checkout mengurangi stok (optimistic + sinkron server)', () => {
 
-  r.test('checkout sukses: stok TIDAK berubah di UI & cache (bukan optimistic minus)', () => {
+  r.test('checkout sukses: stok berkurang SEKETIKA di UI & cache (optimistic)', () => {
     const { dom, app } = loadStokSkenario(RESPON_VALID, RESPON_STOK_BARU);
     isiKeranjangDanCheckout(app, dom);
 
-    r.assertEq(stokProduk(app, '1'), 50, 'stok produk 1 tetap 50 — checkout tidak mengurangi');
-    r.assertEq(stokDiCache(dom, '1'), 50, 'cache stok juga tidak berubah');
+    r.assertEq(stokProduk(app, '1'), 48, 'stok produk 1 langsung 50-2=48 di UI');
+    r.assertEq(stokDiCache(dom, '1'), 48, 'cache ikut diperbarui');
     r.assertEq(app.get('cart').length, 0, 'keranjang dikosongkan (checkout sukses)');
   });
 
-  r.test('checkout multi-produk: tidak ada stok yang dikurangi otomatis', () => {
+  r.test('checkout multi-produk: semua stok produk ikut berkurang', () => {
     const { dom, app } = loadStokSkenario(RESPON_VALID, RESPON_STOK_BARU);
     app.set('cart', [
       { id: '1', nama: 'Semangci 250 ml', jumlah: 2, total: 30000 },
@@ -85,16 +87,16 @@ r.suite('Checkout tidak mengubah stok (stok dikelola manual)', () => {
     dom.window.__elements.selMetode.value = 'QRIS';
     app.call('checkout');
 
-    r.assertEq(stokProduk(app, '1'), 50, 'stok produk 1 tetap');
-    r.assertEq(stokProduk(app, '2'), 30, 'stok produk 2 tetap');
+    r.assertEq(stokProduk(app, '1'), 48, 'stok produk 1 berkurang 2');
+    r.assertEq(stokProduk(app, '2'), 27, 'stok produk 2 berkurang 3');
   });
 
   r.test('refreshData mengganti data dengan hasil server terbaru (bukan cache lama)', () => {
     const { dom, app } = loadStokSkenario(RESPON_VALID, RESPON_STOK_BARU);
     isiKeranjangDanCheckout(app, dom);
 
-    // Server mengembalikan data terbaru; UI harus ikut server (bukan cache lama).
-    r.assertEq(stokProduk(app, '1'), 50, 'stok dari server terbaru (tetap, stok manual)');
+    // Server mengembalikan data terbaru (stok hasil penulisan server); UI ikut server.
+    r.assertEq(stokProduk(app, '1'), 48, 'stok dari server terbaru');
     // Riwayat penjualan juga terisi dari server: 1 baris transaksi + header
     const rawJual = app.get('rawPenjualanData');
     r.assertArray(rawJual, 'rawPenjualanData harus array');

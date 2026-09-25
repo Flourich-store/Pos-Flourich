@@ -2287,9 +2287,16 @@
           sessionStorage.setItem('pos_role', res.role);
 
           updateUserBadge(res.username, res.role);
-          // Ambil data TERBARU dari server segera (bukan cache) agar stok
-          // langsung tampil setelah login tanpa perlu refresh halaman.
-          muatDataAwalSetelahLogin();
+          // OPTIMASI LOGIN: respons checkLogin SEKARANG membawa dataAwal (produk +
+          // penjualan terbaru) — render SEKETIKA tanpa roundtrip getInitialData
+          // kedua (hemat satu overhead HTTP/cold start Apps Script, bisa belasan
+          // detik di jaringan lambat). Bila dataAwal tidak ada (backend lama/gagal),
+          // fallback ke jalur getInitialData terpisah seperti sebelumnya.
+          if (res.dataAwal && Array.isArray(res.dataAwal.produk) && Array.isArray(res.dataAwal.penjualan)) {
+            renderDataPaksa(res.dataAwal);
+          } else {
+            muatDataAwalSetelahLogin();
+          }
           // Tampilkan jumlah transaksi offline yang tertunda & coba kirim ulang
           // (koneksi terbukti hidup karena login berhasil).
           perbaruiIndikatorAntrian();
@@ -3038,6 +3045,7 @@
       safeGoogleRun('prosesCheckout', [cart, metode, uangDibayar], function (res) {
         kunciTombol(false);
         if (res.status === 'success') {
+          const itemsTerjual = Array.isArray(cart) ? cart.slice() : [];
           // Struk muncul SEKETIKA dari data hasil checkout server — TANPA menunggu
           // refresh data (dulu struk baru tampil setelah getInitialData selesai,
           // bisa belasan detik). Sinkronisasi riwayat berjalan di latar belakang.
@@ -3048,9 +3056,12 @@
           document.getElementById('inpQty').value = 1;
           document.getElementById('kembalianBox').innerHTML = 'Uang Kembali : Rp 0';
 
-          // Stok dikelola MANUAL — checkout tidak mengubah stok, jadi tidak ada
-          // penyesuaian stok di sini. refreshData(trueSync) hanya menyegarkan
-          // riwayat penjualan di latar belakang.
+          // Stok langsung berkurang di layar SEKETIKA (optimistic) — server juga
+          // mengurangi stok secara batch. refreshData(TRUE_SYNC) di latar belakang
+          // mengambil angka final; bila server berbeda, angka ikut disesuaikan.
+          itemsTerjual.forEach(function (it) {
+            terapkanPerubahanStokLokal(it.id, -Number(it.jumlah || 0));
+          });
           refreshData(true, true);
         } else {
           alert('Gagal : ' + res.message);

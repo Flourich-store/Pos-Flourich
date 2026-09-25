@@ -302,8 +302,8 @@ r.suite('Antrian Offline — idempotensi backend (Code.js)', () => {
     r.assertEq(res2.transaksi, res1.transaksi, 'respons kirim ulang = respons asli (bukan transaksi baru)');
 
     r.assertEq(sheet.__penjualan.__rows().length, 2, 'Penjualan: header + 1 baris (tidak dobel)');
-    // Stok dikelola manual: checkout tidak pernah menulis stok, apalagi dobel.
-    r.assertEq(Number(sheet.__produk.__rows()[1][2]), 50, 'stok tidak pernah ditulis checkout');
+    // Stok hanya berkurang sekali meski request dikirim ulang: 50 - 2 = 48.
+    r.assertEq(Number(sheet.__produk.__rows()[1][2]), 48, 'stok tidak dobel-kurang (idempoten)');
   });
 
   r.test('koneksiId BEDA -> dua transaksi normal (bukan dedup berlebihan)', () => {
