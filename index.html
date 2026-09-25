@@ -1869,10 +1869,11 @@
     let isMengirimAntrian = false;
     let timerKirimAntrian = null;
 
-    function fetchDenganTimeout(url, opts) {
+    function fetchDenganTimeout(url, opts, timeoutMs) {
+      const batas = timeoutMs || API_TIMEOUT_MS;
       if (typeof AbortController === 'undefined') return fetch(url, opts);
       const ctrl = new AbortController();
-      const timer = setTimeout(function () { ctrl.abort(); }, API_TIMEOUT_MS);
+      const timer = setTimeout(function () { ctrl.abort(); }, batas);
       const gabungan = Object.assign({}, opts, { signal: ctrl.signal });
       return fetch(url, gabungan).finally(function () { clearTimeout(timer); });
     }
@@ -1890,8 +1891,12 @@
         pesan.indexOf('Koneksi ke server tidak tersedia') === 0;
     }
 
-    async function apiRequest(action, args = [], koneksiId = null, trueSync = false) {
+    async function apiRequest(action, args = [], koneksiId = null, trueSync = false, opsi = {}) {
       let kegagalanTerakhir = null;
+      // Opsi per-panggilan (mis. login: gagal cepat, jangan menggantung kasir):
+      // timeout & jumlah percobaan bisa dipendekkan tanpa mengubah perilaku aksi lain.
+      const TIMEOUT_PERCOBAAN = opsi.timeoutMs || API_TIMEOUT_MS;
+      const RETRY_MAKS_AKSI = opsi.retryMaks || API_RETRY_MAKS;
 
       // Cache pendek (3 detik) untuk aksi BACA berulang: sync 10 detik dari banyak
       // perangkat + refresh setelah aksi menulis bisa menumpuk request getInitialData
@@ -1920,10 +1925,14 @@
       // tulis tertentu). Backend mencatatnya agar kirim ulang tidak dobel-catat.
       if (koneksiId) bodyPayload.koneksiId = koneksiId;
 
-      for (let percobaan = 1; percobaan <= API_RETRY_MAKS; percobaan++) {
+      for (let percobaan = 1; percobaan <= RETRY_MAKS_AKSI; percobaan++) {
         try {
           console.log('[POS API] request', { endpoint: API_URL, action: action, percobaan: percobaan });
-          const response = await fetchDenganTimeout(API_URL, {
+          // Cache-buster pada query: mencegah browser/intermediary memakai redirect
+          // (exec -> echo) yang di-cache — sumber 404 berulang saat jaringan Google
+          // berubah-ubah. Param tak dikenal diabaikan backend.
+          const penghalusCache = (API_URL.indexOf('?') === -1 ? '?' : '&') + '_cb=' + Date.now() + '-' + percobaan;
+          const response = await fetchDenganTimeout(API_URL + penghalusCache, {
             method: 'POST',
             headers: {
               'Content-Type': 'text/plain;charset=utf-8',
@@ -1974,8 +1983,8 @@
             throw error instanceof Error ? error : new Error(String(error && error.message || error));
           }
           kegagalanTerakhir = error;
-          console.warn('[POS API] percobaan ' + percobaan + '/' + API_RETRY_MAKS + ' gagal:', error && (error.message || error));
-          if (percobaan < API_RETRY_MAKS) {
+          console.warn('[POS API] percobaan ' + percobaan + '/' + RETRY_MAKS_AKSI + ' gagal:', error && (error.message || error));
+          if (percobaan < RETRY_MAKS_AKSI) {
             await jedaMs(800 * percobaan); // backoff: 0.8s, 1.6s
           }
         }
@@ -1987,7 +1996,7 @@
         try {
           console.warn('[POS API] fallback ke GET untuk', action);
           const argsUntukUrl = (action === 'getInitialData') ? [60] : args;
-          const urlGet = API_URL + '?action=' + encodeURIComponent(action) + '&args=' + encodeURIComponent(JSON.stringify(Array.isArray(argsUntukUrl) ? argsUntukUrl : [argsUntukUrl])) + (koneksiId ? '&koneksiId=' + encodeURIComponent(koneksiId) : '');
+          const urlGet = API_URL + '?action=' + encodeURIComponent(action) + '&args=' + encodeURIComponent(JSON.stringify(Array.isArray(argsUntukUrl) ? argsUntukUrl : [argsUntukUrl])) + (koneksiId ? '&koneksiId=' + encodeURIComponent(koneksiId) : '') + '&_cb=' + Date.now();
           const response = await fetchDenganTimeout(urlGet, { method: 'GET', headers: { 'Accept': 'application/json' } });
           const text = await response.text();
           if (!text || String(text).trim().charAt(0) === '<') {
@@ -2004,7 +2013,7 @@
         }
       }
 
-      console.error('[POS API] semua ' + API_RETRY_MAKS + ' percobaan gagal', kegagalanTerakhir);
+      console.error('[POS API] semua ' + RETRY_MAKS_AKSI + ' percobaan gagal', kegagalanTerakhir);
       throw new Error('Koneksi ke server terputus (jaringan tidak stabil atau server Google sedang sibuk). ' +
         'Periksa sinyal internet lalu coba lagi. Transaksi BELUM tercatat dan isi keranjang Anda masih aman.');
     }
@@ -2229,7 +2238,7 @@
       }
     }
 
-    function safeGoogleRun(methodName, args, successHandler, failureHandler, koneksiId, trueSync) {
+    function safeGoogleRun(methodName, args, successHandler, failureHandler, koneksiId, trueSync, opsiApi) {
       const fallbackMessage = 'Koneksi ke server tidak tersedia. Buka aplikasi dari URL Google Apps Script.';
 
       if (window.location.protocol === 'file:') {
@@ -2251,7 +2260,8 @@
         try {
           // koneksiId diteruskan ke apiRequest sebagai kunci idempotensi.
           // trueSync = data harus segar dari server (lewati cache pendek).
-          const result = await apiRequest(methodName, args, koneksiId, trueSync);
+          // opsiApi = timeout/retry per-panggilan (dipakai login agar gagal cepat).
+          const result = await apiRequest(methodName, args, koneksiId, trueSync, opsiApi);
           if (successHandler) successHandler(result);
         } catch (error) {
           const msg = error && error.message ? error.message : fallbackMessage;
@@ -2272,6 +2282,10 @@
         btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> MEMPROSES...';
       }
 
+      // Gagal cepat: timeout 6 dtk per percobaan, maks 2 percobaan (±14 dtk total
+      // termasuk backoff) — jauh lebih pendek dari default 3x25 dtk. Bila gagal,
+      // tombol kembali aktif dengan pesan jelas; tekan MASUK sekali lagi untuk retry.
+      const opsiLogin = { timeoutMs: 6000, retryMaks: 2 };
       safeGoogleRun('checkLogin', [u, p], function (res) {
         if (btn) {
           btn.disabled = false;
@@ -2311,8 +2325,11 @@
           btn.disabled = false;
           btn.innerHTML = '<i class="fa-solid fa-right-to-bracket"></i> MASUK';
         }
-        alert('Error sistem: ' + (err && err.message ? err.message : err));
-      });
+        const pesan = err && err.message ? err.message : String(err);
+        alert(pesan.indexOf('salah') !== -1 ? pesan :
+          'Koneksi lambat/terputus saat masuk.\n\nPeriksa sinyal internet lalu tekan MASUK lagi.\n' +
+          '(Detail: ' + pesan + ')');
+      }, null, false, opsiLogin);
     }
 
     function logout() {
