@@ -99,7 +99,7 @@ r.suite('Backend — prosesCheckout tulis batch (checkout cepat)', () => {
     return { gas, backend, spreadsheet: gas.scriptRuntime.activeSpreadsheet };
   }
 
-  r.test('checkout 2 produk (3 item): hasil sama dengan versi per-item', () => {
+  r.test('checkout 2 produk (3 item): hasil identik dengan versi per-item', () => {
     const { backend, spreadsheet } = setup();
 
     const res = backend.prosesCheckout([
@@ -111,9 +111,9 @@ r.suite('Backend — prosesCheckout tulis batch (checkout cepat)', () => {
     r.assertEq(res.status, 'success', 'status sukses');
     r.assertEq(res.total, 59000, 'grand total 30000+14000+15000');
     r.assertEq(spreadsheet.__penjualan.__rows().length, 4, '3 baris penjualan + header');
-    // Produk 1 terjual 3x (2+1, agregasi per produk): 50 -> 47
-    r.assertEq(spreadsheet.__produk.__rows()[1][2], 47, 'stok produk 1 berkurang 3 (agregasi)');
-    r.assertEq(spreadsheet.__produk.__rows()[2][2], 29, 'stok produk 2 berkurang 1');
+    // Stok dikelola manual — checkout murni pencatatan penjualan.
+    r.assertEq(spreadsheet.__produk.__rows()[1][2], 50, 'stok produk 1 tidak disentuh');
+    r.assertEq(spreadsheet.__produk.__rows()[2][2], 30, 'stok produk 2 tidak disentuh');
   });
 
   r.test('checkout QRIS tetap sukses dengan jalur batch', () => {
@@ -123,7 +123,7 @@ r.suite('Backend — prosesCheckout tulis batch (checkout cepat)', () => {
       'QRIS', 0
     );
     r.assertEq(res.status, 'success');
-    r.assertEq(spreadsheet.__produk.__rows()[2][2], 28, 'stok 30 -> 28');
+    r.assertEq(spreadsheet.__produk.__rows()[2][2], 30, 'stok tidak disentuh');
   });
 
   r.test('idempotensi tetap bekerja dengan batch: dobel koneksiId = 1 catatan', () => {

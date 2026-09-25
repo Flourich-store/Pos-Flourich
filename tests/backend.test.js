@@ -27,7 +27,7 @@ function setupBackend(spreadsheetOpts, produkRows) {
 
 r.suite('Backend — prosesCheckout (alur normal)', () => {
 
-  r.test('checkout CASH sukses: stok berkurang & baris penjualan ditambah', () => {
+  r.test('checkout CASH sukses: penjualan tercatat, stok TIDAK disentuh (stok manual)', () => {
     const { gas, backend, spreadsheet } = setupBackend();
 
     const res = backend.prosesCheckout(
@@ -39,7 +39,8 @@ r.suite('Backend — prosesCheckout (alur normal)', () => {
     r.assertEq(res.status, 'success', 'status harus success');
     r.assertEq(res.total, 30000, 'grandTotal');
     r.assertEq(res.kembali, 20000, 'uang kembali');
-    r.assertEq(spreadsheet.__produk.__rows()[1][2], 48, 'stok produk 1 berkurang');
+    // Stok dikelola MANUAL via Tambah Stok — checkout tidak boleh mengubahnya.
+    r.assertEq(spreadsheet.__produk.__rows()[1][2], 50, 'stok produk 1 TIDAK berubah');
     r.assertEq(spreadsheet.__penjualan.__rows().length, 2, '1 baris penjualan baru');
   });
 
@@ -65,8 +66,8 @@ r.suite('Backend — prosesCheckout (alur normal)', () => {
     r.assertEq(backend.prosesCheckout('bukan-array', 'CASH', 0).status, 'error');
   });
 
-  r.test('stok tidak mencukupi -> error validasi', () => {
-    const { backend } = setupBackend();
+  r.test('stok sheet basi (qty > stok) TETAP diproses — stok dikelola manual', () => {
+    const { backend, spreadsheet } = setupBackend();
 
     const res = backend.prosesCheckout(
       [{ id: '1', nama: 'Semangci 250 ml', jumlah: 999, total: 999 * 15000 }],
@@ -74,8 +75,11 @@ r.suite('Backend — prosesCheckout (alur normal)', () => {
       999 * 15000
     );
 
-    r.assertEq(res.status, 'error');
-    r.assertIncludes(res.message, 'tidak mencukupi', 'pesan stok');
+    // Tanpa validasi stok di backend: penjualan tercatat apa adanya,
+    // angka stok di sheet tidak pernah ditulis checkout.
+    r.assertEq(res.status, 'success', 'checkout murni pencatatan penjualan');
+    r.assertEq(spreadsheet.__penjualan.__rows().length, 2, 'penjualan tercatat');
+    r.assertEq(spreadsheet.__produk.__rows()[1][2], 50, 'stok tidak disentuh');
   });
 
   r.test('uang CASH kurang -> error', () => {

@@ -203,24 +203,28 @@ r.suite('Audit Penjualan — rantai UI -> backend', () => {
     r.assertEq(app.get('cart')[0].jumlah, 30, 'qty tetap 30');
   });
 
-  r.test('checkout gagal di server (stok kurang) -> keranjang TIDAK hilang, tanpa antrian', async () => {
-    const { dom, app } = muatDenganBackend();
-    // Backend sungguhan akan menolak: minta 40, stok cuma 30
+  r.test('checkout gagal di server (uang kurang) -> keranjang TIDAK hilang, tanpa antrian', async () => {
+    const { dom, app, sheet } = muatDenganBackend();
+    // Backend tetap menolak uang CASH kurang (validasi pembayaran dipertahankata):
+    // cart 2 x 15000 = 30000, bayar cuma 20000.
     app.set('dataProduk', produkBaru());
     app.set('masterData', produkBaru());
-    app.set('cart', [{ id: '2', nama: 'Wonapel 250 ml', jumlah: 40, harga: 14000, total: 560000 }]);
+    app.set('cart', [{ id: '1', nama: 'Semangci 250 ml', jumlah: 2, harga: 15000, total: 30000 }]);
+    dom.window.document.getElementById('selMetode').value = 'CASH';
+    dom.window.document.getElementById('inpBayar').value = '20000';
     dom.confirms.length = 0;
     dom.alerts.length = 0;
     app.call('checkout');
     await flush();
 
     const gabung = dom.alerts.join(' ');
-    r.assertIncludes(gabung, 'tidak mencukupi', 'penolakan stok tampil');
+    r.assertIncludes(gabung, 'kurang', 'penolakan server tampil');
     r.assertEq(app.get('cart').length, 1, 'keranjang tetap ada (bisa dikoreksi)');
     r.assertEq(dom.localStorage.getItem('pos_offline_queue'), null, 'penolakan bisnis TIDAK masuk antrian offline');
+    r.assertEq(sheet.__penjualan.__rows().length, 1, 'tidak ada transaksi tercatat');
   });
 
-  r.test('checkout sukses ujung-ke-ujung: Penjualan tercatat & stok sheet berkurang', async () => {
+  r.test('checkout sukses ujung-ke-ujung: Penjualan tercatat, stok sheet TIDAK disentuh (stok manual)', async () => {
     const { dom, app, sheet } = muatDenganBackend();
     app.set('dataProduk', produkBaru());
     app.set('masterData', produkBaru());
@@ -234,7 +238,7 @@ r.suite('Audit Penjualan — rantai UI -> backend', () => {
     r.assertOk(dom.alerts.length === 0, 'tidak ada alert error');
     r.assertEq(app.get('cart').length, 0, 'keranjang dikosongkan setelah sukses');
     r.assertEq(sheet.__penjualan.__rows().length, 2, 'Penjualan: header + 1 baris');
-    r.assertEq(Number(sheet.__produk.__rows()[1][2]), 48, 'stok sheet 50 -> 48');
+    r.assertEq(Number(sheet.__produk.__rows()[1][2]), 50, 'stok sheet tetap 50 — tidak ditulis checkout');
   });
 
   r.test('validasi konsisten: frontend & backend sama-sama menolak uang kurang', async () => {

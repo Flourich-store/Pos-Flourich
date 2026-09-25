@@ -3017,6 +3017,18 @@
 
       if (!confirm('Proses transaksi ini sekarang?')) return;
 
+      // Proteksi dobel-klik: tombol dinonaktifkan selama transaksi diproses.
+      // Tanpa dialog stok/validasi berat di server, satu checkout = 1 request
+      // ringkas — tombol terkunci mencegah dobel-transaksi akibat klik ganda.
+      const btnCheckout = document.querySelector('.btn-checkout');
+      const kunciTombol = function (kunci) {
+        if (!btnCheckout) return;
+        btnCheckout.disabled = kunci;
+        btnCheckout.style.opacity = kunci ? '0.6' : '';
+        btnCheckout.style.pointerEvents = kunci ? 'none' : '';
+      };
+      kunciTombol(true);
+
       // Id transaksi LOKAL + koneksiId unik (idempotensi): dibuat SEKALI per tekanan
       // tombol sehingga kirim ulang dari antrian tidak pernah dobel-catat di server.
       const nomorAntrian = jumlahAntrianTertunda() + 1;
@@ -3024,8 +3036,8 @@
       const koneksiId = 'kx-' + new Date().getTime() + '-' + Math.random().toString(36).slice(2, 8);
 
       safeGoogleRun('prosesCheckout', [cart, metode, uangDibayar], function (res) {
+        kunciTombol(false);
         if (res.status === 'success') {
-          const itemsTerjual = Array.isArray(cart) ? cart.slice() : [];
           // Struk muncul SEKETIKA dari data hasil checkout server — TANPA menunggu
           // refresh data (dulu struk baru tampil setelah getInitialData selesai,
           // bisa belasan detik). Sinkronisasi riwayat berjalan di latar belakang.
@@ -3036,12 +3048,9 @@
           document.getElementById('inpQty').value = 1;
           document.getElementById('kembalianBox').innerHTML = 'Uang Kembali : Rp 0';
 
-          // Stok langsung berkurang di layar SEKETIKA (optimistic), TANPA menunggu
-          // server. refreshData(TRUE_SYNC) di latar belakang mengambil data valid;
-          // bila server berbeda (kasus langka), angka ikut disesuaikan otomatis.
-          itemsTerjual.forEach(function (it) {
-            terapkanPerubahanStokLokal(it.id, -Number(it.jumlah || 0));
-          });
+          // Stok dikelola MANUAL — checkout tidak mengubah stok, jadi tidak ada
+          // penyesuaian stok di sini. refreshData(trueSync) hanya menyegarkan
+          // riwayat penjualan di latar belakang.
           refreshData(true, true);
         } else {
           alert('Gagal : ' + res.message);
@@ -3050,6 +3059,7 @@
         // PENTING: keranjang sengaja TIDAK dikosongkan saat checkout gagal — jika
         // kegagalannya karena jaringan, transaksi belum tercatat dan kasir cukup
         // menekan PROSES TRANSAKSI lagi tanpa memasukkan ulang item.
+        kunciTombol(false);
         const msg = err && err.message ? err.message : String(err);
         if (adalahKegagalanJaringan(err)) {
           // Struk lokal untuk kasir (ID sementara). Struk server asli menyusul

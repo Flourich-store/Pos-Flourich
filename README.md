@@ -40,10 +40,10 @@ node tests/audit_input.test.js
 - Cart tercemar non-array dan `addToCart` saat data gagal dimuat.
 - Mode lokal (`file:`): mock backend & alur lengkap add-to-cart → checkout.
 
-**Stok UI langsung berubah (`tests/frontend_stok.test.js`) — 6 kasus:**
-- Optimistic update: stok berkurang seketika setelah checkout sukses (lokal + cache),
-  multi-produk ikut terkurang, checkout gagal tidak mengubah stok.
-- Stok langsung bertambah setelah tambah stok sukses.
+**Stok UI & sinkronisasi (`tests/frontend_stok.test.js`) — 6 kasus:**
+- **Stok dikelola manual**: checkout sukses TIDAK mengubah stok di UI/cache
+  (backend murni pencatatan penjualan, tanpa tulis stok).
+- Stok berubah hanya lewat Tambah Stok (langsung tampil di UI) / data server.
 - Sinkronisasi berkala memakai data server terbaru (bukan render cache lama).
 
 **Alur pasca-login (`tests/frontend_login.test.js`) — 9 kasus:**
@@ -86,9 +86,10 @@ node tests/audit_input.test.js
   bertambah; guard qty tidak valid di frontend; prompt dibatalkan → tanpa request;
   role tanpa akses diblokir sebelum prompt qty.
 - **Rantai penjualan ujung-ke-ujung** (UI → `doPost` → mock spreadsheet): addToCart
-  & updateCartQty menolak qty melebihi stok; checkout gagal stok → keranjang aman
-  & tidak masuk antrian offline; checkout sukses → Penjualan tercatat 1 baris +
-  stok sheet berkurang; uang kurang ditolak konsisten oleh frontend & backend.
+  & updateCartQty menolak qty melebihi stok; checkout ditolak server → keranjang aman
+  & tidak masuk antrian offline; checkout sukses → Penjualan tercatat 1 baris,
+  stok sheet tidak disentuh (stok manual); uang kurang ditolak konsisten oleh
+  frontend & backend.
 
 ### Struktur berkas pengujian
 

@@ -603,6 +603,16 @@ function prosesCheckout(cart, metode, uangDibayar, requestData) {
       };
     }
 
+    // Harga satuan & modal diambil dari data produk via Map (O(1) per item).
+    // TANPA validasi & TANPA pengurangan stok: stok dikelola MANUAL via fitur
+    // Tambah Stok. Checkout murni pencatatan penjualan -> tulis sheet minimal
+    // (1 setValues penjualan) = tercepat.
+    const hargaPerId = new Map();
+    for (let i = 1; i < dataProduk.length; i++) {
+      const kunci = String(dataProduk[i][0] || '').trim();
+      if (kunci) hargaPerId.set(kunci, dataProduk[i]);
+    }
+
     let grandTotal = 0;
     const validatedItems = [];
 
@@ -619,21 +629,12 @@ function prosesCheckout(cart, metode, uangDibayar, requestData) {
         return { status: "error", message: "Jumlah item harus lebih dari 0." };
       }
 
-      // Type guard sebelum memanggil findIndex: hanya array yang punya method .findIndex().
-      const produkindex = Array.isArray(dataProduk)
-        ? dataProduk.findIndex(row => String(row[0] || '').trim() === itemId)
-        : -1;
-      if (produkindex <= 0) {
+      const produk = hargaPerId.get(itemId);
+      if (!produk) {
         return { status: "error", message: "Produk ID " + itemId + " tidak ditemukan." };
       }
 
-      const produk = dataProduk[produkindex];
       const hargaSatuan = Number(produk[3] || 0);
-      const stokTersedia = Number(produk[2] || 0);
-      if (jumlah > stokTersedia) {
-        return { status: "error", message: "Stok " + (itemNama || produk[1] || itemId) + " tidak mencukupi." };
-      }
-
       const totalHargaItem = hargaSatuan * jumlah;
       grandTotal += totalHargaItem;
 
@@ -707,43 +708,11 @@ function prosesCheckout(cart, metode, uangDibayar, requestData) {
       });
 
       // Batch penjualan: semua item dalam SATU setValues setelah baris terakhir.
+      // Stok TIDAK ditulis di sini — dikelola manual via fitur Tambah Stok.
       const lastRowJual = shPenjualan.getLastRow();
       shPenjualan
         .getRange(lastRowJual + 1, 1, barisPenjualan.length, barisPenjualan[0].length)
         .setValues(barisPenjualan);
-
-      // Batch stok: agregasi pengurangan per produk dulu (produk yang sama bisa
-      // muncul beberapa kali di cart), lalu tulis setiap baris TEPAT SEKALI.
-      const penguranganPerIdx = new Map(); // produkindex (0-based) -> total qty
-      for (const item of validatedItems) {
-        const pIdx = Array.isArray(dataProduk)
-          ? dataProduk.findIndex(row => String(row[0] || '').trim() === item.id)
-          : -1;
-        if (pIdx > 0) {
-          penguranganPerIdx.set(pIdx, (penguranganPerIdx.get(pIdx) || 0) + item.jumlah);
-        }
-      }
-      // Urutkan berdasarkan baris sheet agar rentang berurutan bisa digabung
-      // menjadi SATU operasi setValues (umumnya hanya 1-2 rentang per transaksi).
-      const entriStok = Array.from(penguranganPerIdx.entries()).sort((a, b) => a[0] - b[0]);
-      if (entriStok.length > 0) {
-        const indeksStok = entriStok.map(e => e[0] + 1); // nomor baris sheet (1-based)
-        const nilaiStok = entriStok.map(e => {
-          const stokBaru = Number(dataProduk[e[0]][2] || 0) - e[1];
-          dataProduk[e[0]][2] = stokBaru;
-          return [stokBaru];
-        });
-        let k = 0;
-        while (k < indeksStok.length) {
-          let m = k;
-          while (m + 1 < indeksStok.length && indeksStok[m + 1] === indeksStok[m] + 1) m++;
-          const jumlahBaris = m - k + 1;
-          shProduk
-            .getRange(indeksStok[k], 3, jumlahBaris, 1)
-            .setValues(nilaiStok.slice(k, m + 1));
-          k = m + 1;
-        }
-      }
     }
 
     const hasilSukses = {
