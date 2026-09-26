@@ -270,6 +270,48 @@ r.suite('Frontend — apiRequest retry & fallback GET', () => {
     r.assertIncludes(panggilan[panggilan.length - 1].url, 'action=checkLogin', 'GET memuat action checkLogin');
   });
 
+  r.test('REGRESI v82: HTTP 404 (body HTML) di POST -> LANGSUNG fallback GET tanpa retry POST ulang', async () => {
+    const { app, panggilan } = loadJaringanSkenario(function (url, opts) {
+      if ((opts && opts.method) === 'POST') {
+        return Promise.resolve({ ok: false, status: 404, text: () => Promise.resolve('<html>Not Found</html>') });
+      }
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        text: () => Promise.resolve(JSON.stringify({ status: true, username: 'admin' }))
+      });
+    });
+
+    const hasil = await app.call('apiRequest', 'checkLogin', ['admin', 'password']);
+    r.assertEq(hasil.status, true, 'login sukses via GET setelah POST 404');
+    r.assertEq(panggilan.filter(p => p.method === 'POST').length, 1, 'POST hanya 1x (tidak dibuang-buang waktu di jalur mati)');
+    r.assertEq(panggilan.filter(p => p.method === 'GET').length, 1, 'fallback GET tetap jalan');
+  });
+
+  r.test('HTTP 500 tetap di-retry di jalur POST (perilaku lama dipertahankan)', async () => {
+    const { app, panggilan } = loadJaringanSkenario(function (url, opts) {
+      if ((opts && opts.method) === 'POST') {
+        return Promise.resolve({ ok: false, status: 500, text: () => Promise.resolve('<html>Server Error</html>') });
+      }
+      return Promise.resolve({ ok: true, status: 200, text: () => Promise.resolve(JSON.stringify({ ok: true })) });
+    });
+
+    await tangkapError(app.call('apiRequest', 'getInitialData', []));
+    r.assertEq(panggilan.filter(p => p.method === 'POST').length, 3, '5xx masih di-retry 3x di POST');
+    r.assertEq(panggilan.filter(p => p.method === 'GET').length, 1, 'lalu fallback GET 1x');
+  });
+
+  r.test('opsi retryMaks/timeoutMs per-panggilan benar-benar dipakai (login gagal cepat)', async () => {
+    const { app, panggilan } = loadJaringanSkenario(function () {
+      return Promise.reject(new TypeError('Failed to fetch')); // simulasi timeout/abort
+    });
+
+    const err = await tangkapError(app.call('apiRequest', 'checkLogin', ['a', 'b'], null, false, { timeoutMs: 50, retryMaks: 2 }));
+    r.assertOk(err, 'error dilempar setelah semua percobaan gagal');
+    r.assertEq(panggilan.filter(p => p.method === 'POST').length, 2, 'retryMaks dari opsi dipakai (2, bukan default 3)');
+    r.assertIncludes(err.message, 'Koneksi ke server terputus', 'pesan ramah ke kasir');
+  });
+
 });
 
 r.run('frontend_jaringan.test.js').then(ok => {

@@ -91,6 +91,19 @@ node tests/audit_input.test.js
   stok sheet tidak disentuh (stok manual); uang kurang ditolak konsisten oleh
   frontend & backend.
 
+### Perbaikan v82 — kalibrasi ulang login & ketahanan fallback
+
+- **Timeout login 6 dtk → 20 dtk**: diagnostik live menunjukkan redirect 302 Google
+  saja butuh 4,7-5,3 dtk dan `checkLogin` (yang membawa `dataAwal`) bisa 5-15 dtk saat
+  cold start — timeout 6 dtk v81 memotong request yang masih diproses server
+  ("Failed to fetch" berulang → alert koneksi).
+- **Watchdog login 60 dtk**: browser lama tanpa `AbortController` tidak punya timeout
+  sendiri — kini tombol MASUK dijamin kembali aktif walau fetch menggantung.
+- **HTTP 401/403/404 di POST → langsung fallback GET** (tanpa retry di jalur yang
+  sama); 5xx & 429 tetap di-retry 3x. Cek `!response.ok` kini SEBELUM parsing JSON
+  agar 404 ber-body HTML tidak menyembunyikan penyebab.
+- Pesan gagal login menjelaskan cold start 10-20 dtk pertama.
+
 ### Perbaikan v81 — audit mobile (login & stok)
 
 - **Self-check versi halaman**: GitHub Pages meng-cache HTML (`max-age=600`) sehingga

@@ -9,7 +9,7 @@
   <!-- Penanda versi halaman: dipakai self-check di blok script bawah untuk
        auto-reload bila browser mobile masih menyimpan HTML lama (GitHub Pages
        meng-cache 10 menit). Naikkan BERSAMAAN dengan VERSI_HTML tiap rilis. -->
-  <meta name="app-version" content="81">
+  <meta name="app-version" content="82">
 
   <link rel="icon" type="image/png" sizes="192x192"
     href="https://lh3.googleusercontent.com/d/1kbCU9E4sSQTdBylR24DFnRvsX1cAT">
@@ -1858,7 +1858,7 @@
     // berkurang setelah checkout" di HP: perangkat menjalankan kode tua tanpa
     // sadar. Bila versi di server lebih baru dari versi yang berjalan, muat
     // ulang SEKALI otomatis. Penanda versi = <meta name="app-version">.
-    const VERSI_HTML = 81;
+    const VERSI_HTML = 82;
     function periksaVersiHalaman() {
       try {
         if (window.location.protocol === 'file:') return; // mode lokal: tidak relevan
@@ -1981,6 +1981,21 @@
           const text = await response.text();
           console.log('[POS API] response', { status: response.status, percobaan: percobaan, text: String(text).slice(0, 200) });
 
+          // HTTP non-200 dicek SEBELUM parsing: 404 Google sering membawa body
+          // HTML (bukan JSON), dan parsing yang gagal lebih dulu akan menyembunyikan
+          // penyebab sebenarnya.
+          if (!response.ok) {
+            // 5xx & 429 membaik dengan percobaan ulang; 401/403/404 jarang membaik
+            // lewat jalur yang SAMA -> langsung jatuh ke fallback GET (jalur
+            // berbeda sering masih hidup) tanpa membuang 2x waktu retry di
+            // jalur POST yang jelas bermasalah.
+            const status = response.status;
+            if (status !== 429 && status < 500) {
+              throw { name: 'GserveHtml', message: 'HTTP_' + status, __langsungGet: true };
+            }
+            throw { name: 'GserveHtml', message: 'HTTP_' + status };
+          }
+
           // Google kadang membalas halaman HTML error (bukan JSON) saat infrastrukturnya
           // bermasalah — perlakukan seperti kegagalan jaringan agar di-retry.
           if (!text || String(text).trim().charAt(0) === '<') {
@@ -1995,10 +2010,6 @@
             throw { name: 'GserveHtml', message: 'HTML_GSERVE' };
           }
 
-          if (!response.ok) {
-            // HTTP non-200 (5xx, 429, dsb.) = masalah infrastruktur -> layak di-retry.
-            throw { name: 'GserveHtml', message: 'HTTP_' + response.status };
-          }
           if (payload.status === 'error') {
             // Error bisnis dari backend (validasi, stok, dsb.): jangan di-retry,
             // tampilkan pesannya apa adanya. Backend GAS selalu balas 200 untuk ini.
@@ -2021,6 +2032,7 @@
           }
           kegagalanTerakhir = error;
           console.warn('[POS API] percobaan ' + percobaan + '/' + RETRY_MAKS_AKSI + ' gagal:', error && (error.message || error));
+          if (error && error.__langsungGet) break; // jalur POST jelas bermasalah -> langsung fallback GET
           if (percobaan < RETRY_MAKS_AKSI) {
             await jedaMs(800 * percobaan); // backoff: 0.8s, 1.6s
           }
@@ -2322,11 +2334,31 @@
         btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> MEMPROSES...';
       }
 
-      // Gagal cepat: timeout 6 dtk per percobaan, maks 2 percobaan (±14 dtk total
-      // termasuk backoff) — jauh lebih pendek dari default 3x25 dtk. Bila gagal,
-      // tombol kembali aktif dengan pesan jelas; tekan MASUK sekali lagi untuk retry.
-      const opsiLogin = { timeoutMs: 6000, retryMaks: 2 };
+      // Pengaman terakhir (v82): sebagian browser lama TIDAK punya AbortController
+      // sehingga fetch tanpa batas waktu bisa menggantung selamanya dan tombol
+      // tertahan di "MEMPROSES...". Bila 60 dtk tidak ada jawaban sukses/gagal
+      // sama sekali, kembalikan tombol agar kasir bisa menekan MASUK lagi.
+      let loginSelesai = false;
+      setTimeout(function () {
+        if (loginSelesai) return;
+        loginSelesai = true;
+        console.log('[POS] LOGIN FAILURE: watchdog 60 dtk — tidak ada jawaban sama sekali');
+        if (btn) {
+          btn.disabled = false;
+          btn.innerHTML = '<i class="fa-solid fa-right-to-bracket"></i> MASUK';
+        }
+      }, 60000);
+
+      // Timeout login DIKALIBRASI ULANG (v82): checkLogin membawa dataAwal
+      // (produk + riwayat) — saat cold start Apps Script eksekusinya terukur
+      // 5-15 dtk, ditambah redirect 302 Google yang saja 2-5 dtk. Timeout 6 dtk
+      // (v81) terbukti MEMOTONG request yang masih diproses server (log:
+      // "Failed to fetch" berulang lalu alert koneksi). 20 dtk memberi ruang
+      // cold start, tetap lebih cepat dari default 25 dtk x 3 bila server
+      // benar-benar mati (maks ±42 dtk termasuk backoff).
+      const opsiLogin = { timeoutMs: 20000, retryMaks: 2 };
       safeGoogleRun('checkLogin', [u, p], function (res) {
+        loginSelesai = true;
         console.log('[POS] LOGIN REQUEST SENT');
         if (btn) {
           btn.disabled = false;
@@ -2363,6 +2395,7 @@
           alert('Gagal: Username atau Password salah/tidak terdaftar!');
         }
       }, function (err) {
+        loginSelesai = true;
         if (btn) {
           btn.disabled = false;
           btn.innerHTML = '<i class="fa-solid fa-right-to-bracket"></i> MASUK';
@@ -2370,7 +2403,8 @@
         const pesan = err && err.message ? err.message : String(err);
         console.log('[POS] LOGIN FAILURE:', pesan);
         alert(pesan.indexOf('salah') !== -1 ? pesan :
-          'Koneksi lambat/terputus saat masuk.\n\nPeriksa sinyal internet lalu tekan MASUK lagi.\n' +
+          'Koneksi lambat/terputus saat masuk.\n\n' +
+          'Server Google Apps Script kadang butuh 10-20 detik pertama (cold start) — tunggu sebentar lalu tekan MASUK lagi.\n' +
           '(Detail: ' + pesan + ')');
       }, null, false, opsiLogin);
     }
