@@ -603,10 +603,12 @@ function getInitialData(limitPenjualan) {
           Number(row[4] || 0),
           String(row[5] || ""),
           Number(row[6] || 0),
-          Number(row[7] || 0),
-          Number(row[8] || 0),
-          Number(row[9] || 0),
-          Number(row[10] || 0)
+          Number(row[7] || 0)
+          // Fase 1 (v83): kolom 8-10 (Modal, biayaOperasional, labaBersih) TIDAK
+          // dikirim ke klien — hasil dependency check: POS frontend hanya membaca
+          // kolom 0-7; dashboard getPenjualanReport membaca langsung dari sheet;
+          // tidak ada export CSV. Sheet tetap menulis 11 kolom (prosesCheckout
+          // tidak berubah) — yang dirampingkan hanya payload jaringan.
         ]);
       }
     }

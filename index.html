@@ -9,7 +9,7 @@
   <!-- Penanda versi halaman: dipakai self-check di blok script bawah untuk
        auto-reload bila browser mobile masih menyimpan HTML lama (GitHub Pages
        meng-cache 10 menit). Naikkan BERSAMAAN dengan VERSI_HTML tiap rilis. -->
-  <meta name="app-version" content="82">
+  <meta name="app-version" content="83">
 
   <link rel="icon" type="image/png" sizes="192x192"
     href="https://lh3.googleusercontent.com/d/1kbCU9E4sSQTdBylR24DFnRvsX1cAT">
@@ -18,8 +18,8 @@
     href="https://lh3.googleusercontent.com/d/1kbCU9E4sSQTdBylR24DFnRvsX1cAT">
 
   <!-- Google Fonts: Plus Jakarta Sans -->
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="preconnect" href="https://fonts.googleapis.com">    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,300..800;1,300..800&display=swap"
     rel="stylesheet">
 
@@ -1858,7 +1858,7 @@
     // berkurang setelah checkout" di HP: perangkat menjalankan kode tua tanpa
     // sadar. Bila versi di server lebih baru dari versi yang berjalan, muat
     // ulang SEKALI otomatis. Penanda versi = <meta name="app-version">.
-    const VERSI_HTML = 82;
+    const VERSI_HTML = 83;
     function periksaVersiHalaman() {
       try {
         if (window.location.protocol === 'file:') return; // mode lokal: tidak relevan
@@ -2612,7 +2612,7 @@
           tbodyHTML += `
             <tr style="cursor: pointer;" onclick="pilihProdukDariTabel('${idProd}')" title="Klik untuk memilih ${safeName}">
               <td>
-                <img src="${fotoUrl}" class="product-thumb" alt="${safeName}" title="Klik untuk lihat foto ${safeName}" onclick="event.stopPropagation(); previewProductImage('${rawFoto.replace(/'/g, "\\'")}', '${safeName}')" onerror="handleImageError(this, '${rawFoto.replace(/'/g, "\\'")}')">
+                <img src="${fotoUrl}" class="product-thumb" loading="lazy" decoding="async" alt="${safeName}" title="Klik untuk lihat foto ${safeName}" onclick="event.stopPropagation(); previewProductImage('${rawFoto.replace(/'/g, "\\'")}', '${safeName}')" onerror="handleImageError(this, '${rawFoto.replace(/'/g, "\\'")}')">
               </td>
               <td><span class="product-title">${namaProd}</span></td>
               <td><span class="${stokBadgeClass}">${stokProd}</span></td>
@@ -2938,12 +2938,15 @@
       const startIndex = (currentPage - 1) * rowsPerPage;
       const endIndex = Math.min(startIndex + rowsPerPage, totalRows);
 
+      // Fase 1 (v83): bangun string dulu, tulis SEKALI — innerHTML += di dalam
+      // loop memicu re-parse seluruh tabel per baris (O(n²) reflow di HP).
+      let barisHtml = '';
       for (let i = startIndex; i < endIndex; i++) {
         const row = filteredPenjualanData[i];
         const isCash = String(row[5] || '').toUpperCase() === 'CASH';
         const badgeClass = isCash ? 'badge badge-cash' : 'badge badge-qris';
 
-        tbodyJual.innerHTML += `<tr>
+        barisHtml += `<tr>
           <td><span style="color:var(--primary); font-weight:700;">${row[0] || ''}</span></td>
           <td>${row[1] || ''}</td>
           <td><b>${row[2] || ''}</b></td>
@@ -2954,6 +2957,7 @@
           <td>Rp ${Number(row[7] || 0).toLocaleString('id-ID')}</td>
         </tr>`;
       }
+      tbodyJual.innerHTML = barisHtml;
 
       updatePaginationControls(totalPages);
     }
