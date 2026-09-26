@@ -566,7 +566,9 @@ function getInitialData(limitPenjualan) {
 
   // ─── 2. PENJUALAN DATA (batch getValues) ───
   const shPenjualan = ss.getSheetByName("Penjualan");
-  const penjualanHeader = ['id', 'tanggal', 'namaProduk', 'jumlah', 'totalHarga', 'metode', 'uangDibayar', 'uangKembali', 'Modal', 'biayaOperasional', 'labaBersih'];
+  // v83: header payload hanya 8 kolom (senada baris data — kolom 8-10 tidak
+  // dikirim ke klien; frontend membaca baris data mulai index 1).
+  const penjualanHeader = ['id', 'tanggal', 'namaProduk', 'jumlah', 'totalHarga', 'metode', 'uangDibayar', 'uangKembali'];
   let penjualanResult = [penjualanHeader];
 
   if (shPenjualan) {

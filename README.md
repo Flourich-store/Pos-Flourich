@@ -91,6 +91,31 @@ node tests/audit_input.test.js
   stok sheet tidak disentuh (stok manual); uang kurang ditolak konsisten oleh
   frontend & backend.
 
+### Perbaikan v84 — Fase 2: ikon SVG inline (FontAwesome dihapus)
+
+- **Inventaris lengkap**: 28 glyph unik (27 statik + `eye-slash` dinamis) + animasi
+  `fa-spin`. Mapping 1:1 ke SVG resmi Font Awesome Free 6.4.0 (CC BY 4.0) sebagai
+  `<symbol>` inline sprite — dirender via `<use href="#icon-...">`.
+- **Hemat ±252 KB + 1 request** per kunjungan: CSS all.min.css (102 KB) + webfont
+  fa-solid-900.woff2 (150 KB) tidak lagi diunduh; sprite hanya ±5 KB dan ikut cache
+  halaman.
+- Toggle intip-password kini via `setPassIcon()` (ganti `href` `<use>`), bukan
+  classList. Aturan CSS `.login-hint i`, `.user-badge i`, `.card h3 i` diganti
+  selector `.ic`; animasi spin ada di `.icon-spin`.
+- **Verifikasi nol dependensi**: 0 token `fa-*`, 0 tag `<i>`, 0 link font-awesome,
+  0 request cdnjs. FA dihapus HANYA setelah semua 38 tag `<i>` terganti.
+- Regresi browser (mock lokal, produksi aman): login, toggle password, ikon kart/
+  navbar/modal/struk, checkout CASH (stok 50→49 instan), 360px tanpa overflow.
+
+### Perbaikan v83 — Fase 1 optimasi performa
+
+- `getInitialData` tidak mengirim kolom 8-10 (Modal/biayaOperasional/labaBersih) —
+  dependency check: frontend hanya baca kolom 0-7, dashboard baca langsung sheet,
+  tanpa export CSV. Sheet tetap 11 kolom.
+- `renderPenjualanTable` single-write (dulu `innerHTML +=` per baris, O(n²)).
+- Gambar produk `loading=lazy decoding=async`.
+- `preconnect` CDN ikon.
+
 ### Perbaikan v82 — kalibrasi ulang login & ketahanan fallback
 
 - **Timeout login 6 dtk → 20 dtk**: diagnostik live menunjukkan redirect 302 Google
