@@ -200,4 +200,36 @@ r.suite('Backend — doPost (jalur HTTP frontend)', () => {
   });
 });
 
+r.suite('Backend — LockService (kunci tulis checkout & tambah stok)', () => {
+
+  r.test('prosesCheckout & tambahStokProduk berjalan di bawah kunci tulis (acquire + release)', () => {
+    const { gas, backend } = setupBackend();
+
+    const res = backend.prosesCheckout(
+      [{ id: '1', nama: 'Semangci 250 ml', jumlah: 1, total: 15000 }],
+      'QRIS', 0
+    );
+    r.assertEq(res.status, 'success', 'checkout sukses di bawah lock');
+    r.assertEq(gas.__lockState.acquired, 1, 'lock di-acquire 1x');
+    r.assertEq(gas.__lockState.released, 1, 'lock di-release setelah selesai');
+
+    backend.tambahStokProduk('1', 5, 'KASIR');
+    r.assertEq(gas.__lockState.acquired, 2, 'tambahStokProduk juga memakai lock');
+    r.assertEq(gas.__lockState.released, 2, 'lock dilepas lagi');
+  });
+
+  r.test('lock tidak diperoleh (timeout) -> transaksi TETAP diproses tanpa lock (tidak memblokir kasir)', () => {
+    const { gas, backend, spreadsheet } = setupBackend();
+    gas.__lockState.gagalkanLock = true; // simulasi tryLock gagal/timeout
+
+    const res = backend.prosesCheckout(
+      [{ id: '2', nama: 'Wonapel 250 ml', jumlah: 2, total: 28000 }],
+      'QRIS', 0
+    );
+    r.assertEq(res.status, 'success', 'transaksi tetap sukses meski lock gagal');
+    r.assertEq(spreadsheet.__produk.__rows()[2][2], 28, 'stok tetap berkurang 30-2=28');
+    r.assertEq(gas.__lockState.released, 0, 'lock gagal didapat -> tidak ada release palsu');
+  });
+});
+
 r.run('Backend Code.js').then(ok => { process.exit(ok ? 0 : 1); });

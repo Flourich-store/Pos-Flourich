@@ -125,6 +125,21 @@ function createGasMock() {
     newTrigger: () => { throw new Error('ScriptApp tidak tersedia di mock'); }
   };
 
+  // Mock LockService (v81): Code.js prosesCheckout/tambahStokProduk berjalan di
+  // bawah kunci tulis. State direkam agar test bisa memverifikasi acquire/
+  // release; gagalkanLock mensimulasikan lock timeout (fallback tanpa lock).
+  const lockState = { acquired: 0, released: 0, gagalkanLock: false };
+  const LockService = {
+    getScriptLock: () => ({
+      tryLock: () => {
+        if (lockState.gagalkanLock) return false;
+        lockState.acquired++;
+        return true;
+      },
+      releaseLock: () => { lockState.released++; }
+    })
+  };
+
   const ContentService = {
     MimeType: { JSON: 'application/json' },
     createTextOutput: (text) => {
@@ -142,7 +157,7 @@ function createGasMock() {
 
   return {
     Logger, PropertiesService, SpreadsheetApp, DriveApp, Utilities, ScriptApp,
-    ContentService, HtmlService, scriptRuntime, createSpreadsheetMock
+    ContentService, HtmlService, LockService, scriptRuntime, createSpreadsheetMock, __lockState: lockState
   };
 }
 
@@ -162,6 +177,7 @@ function loadBackend(gas) {
     DriveApp: gas.DriveApp,
     Utilities: gas.Utilities,
     ScriptApp: gas.ScriptApp,
+    LockService: gas.LockService,
     ContentService: gas.ContentService,
     HtmlService: gas.HtmlService,
     Session: { getActiveUser: () => ({ getEmail: () => '' }) },

@@ -91,6 +91,29 @@ node tests/audit_input.test.js
   stok sheet tidak disentuh (stok manual); uang kurang ditolak konsisten oleh
   frontend & backend.
 
+### Perbaikan v81 — audit mobile (login & stok)
+
+- **Self-check versi halaman**: GitHub Pages meng-cache HTML (`max-age=600`) sehingga
+  HP bisa menjalankan halaman LAMA tanpa sadar — penyebab utama "login nyangkut" dan
+  "stok tidak berkurang" yang ternyata bukan bug kode. Kini halaman membandingkan
+  `<meta name="app-version">` (browser) dengan versi di server dan reload otomatis
+  SEKALI bila lebih tua (guard sesi anti-loop). Naikkan `VERSI_HTML` + meta bersamaan
+  tiap rilis.
+- **Timeout login benar-benar berlaku**: `opsi.timeoutMs` sebelumnya dihitung tapi
+  tidak pernah diteruskan ke `fetchDenganTimeout` (login mobile tetap menunggu 25
+  dtk per percobaan). Kini diteruskan via `opts.batasMs` — login gagal cepat ±14 dtk
+  dengan tombol kembali aktif + pesan jelas.
+- **Stok langsung berkurang di UI**: update stok optimistic pasca-checkout kini
+  merender via `renderDataPaksa()` (guard `isUserInteracting` tidak lagi bisa
+  menahan tampilnya stok baru di HP).
+- **LockService**: `prosesCheckout` & `tambahStokProduk` berjalan di bawah kunci
+  tulis script-wide (maks tunggu 20 dtk; bila lock gagal, transaksi tetap diproses
+  tanpa lock agar kasir tidak pernah terblokir). Mencegah race condition dobel-tulis
+  stok antar perangkat yang checkout bersamaan.
+- **Debug log alur** (tanpa kredensial): `LOGIN START → REQUEST SENT → SUCCESS/FAILURE`,
+  `CHECKOUT START → SUCCESS/FAILURE`, `PRODUCT REFRESH START` — mudah dibaca dari
+  remote debugging HP.
+
 ### Struktur berkas pengujian
 
 ```
@@ -102,5 +125,7 @@ tests/
 ├── frontend_login.test.js      # Regresi stok tampil setelah login
 ├── frontend_jaringan.test.js   # Regresi ketahanan jaringan (retry + fallback GET)
 ├── frontend_antrian.test.js    # Regresi antrian transaksi offline + idempotensi
-└── audit_input.test.js         # Audit jalur input stok & penjualan (uji perbaikan bug)
+├── audit_input.test.js         # Audit jalur input stok & penjualan (uji perbaikan bug)
+├── frontend_performa.test.js   # Regresi checkout instan + cache + trueSync
+└── (kode & README)             # total 8 suite, 111 kasus (v81)
 ```

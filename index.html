@@ -6,6 +6,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>Flou Rich POS</title>
 
+  <!-- Penanda versi halaman: dipakai self-check di blok script bawah untuk
+       auto-reload bila browser mobile masih menyimpan HTML lama (GitHub Pages
+       meng-cache 10 menit). Naikkan BERSAMAAN dengan VERSI_HTML tiap rilis. -->
+  <meta name="app-version" content="81">
+
   <link rel="icon" type="image/png" sizes="192x192"
     href="https://lh3.googleusercontent.com/d/1kbCU9E4sSQTdBylR24DFnRvsX1cAT">
   <link rel="icon" type="image/png" href="flourich_logo.png">
@@ -1846,6 +1851,37 @@
     const API_TIMEOUT_MS = 25000; // batas tunggu per percobaan (cold start GAS bisa lambat)
     const API_RETRY_MAKS = 3;     // total percobaan per request
 
+    // ==== Self-check versi halaman (v81) ====
+    // GitHub Pages meng-cache HTML 10 menit (Cache-Control: max-age=600) dan
+    // browser mobile bisa memakai salinan lebih lama lagi. Halaman LAMA (sebelum
+    // perbaikan v77-v80) adalah penyebab utama "login nyangkut" dan "stok tidak
+    // berkurang setelah checkout" di HP: perangkat menjalankan kode tua tanpa
+    // sadar. Bila versi di server lebih baru dari versi yang berjalan, muat
+    // ulang SEKALI otomatis. Penanda versi = <meta name="app-version">.
+    const VERSI_HTML = 81;
+    function periksaVersiHalaman() {
+      try {
+        if (window.location.protocol === 'file:') return; // mode lokal: tidak relevan
+        if (typeof fetch !== 'function') return;          // lingkungan tanpa fetch
+        // Guard sesi: jangan periksa ulang setelah reload otomatis (anti-loop).
+        if (sessionStorage.getItem('pos_versi_diperiksa') === String(VERSI_HTML)) return;
+        const urlHalaman = String(window.location.href || 'x');
+        fetch(urlHalaman + (urlHalaman.indexOf('?') === -1 ? '?' : '&') + '_v=' + Date.now(), { cache: 'no-store' })
+          .then(function (r) { return r.text(); })
+          .then(function (teks) {
+            const m = teks.match(/name="app-version"\s+content="(\d+)"/);
+            const versiServer = m ? parseInt(m[1], 10) : VERSI_HTML;
+            if (versiServer > VERSI_HTML) {
+              sessionStorage.setItem('pos_versi_diperiksa', String(VERSI_HTML));
+              console.log('[POS] HTML lama terdeteksi (v' + VERSI_HTML + ' < v' + versiServer + '), muat ulang otomatis...');
+              window.location.reload();
+            }
+          })
+          .catch(function () { }); // gagal cek versi = halaman tetap berjalan normal
+      } catch (e) { }
+    }
+    periksaVersiHalaman();
+
     function jedaMs(ms) { return new Promise(r => setTimeout(r, ms)); }
 
     // Aksi BACA yang aman dijadikan fallback jalur GET saat POST gagal jaringan.
@@ -1870,7 +1906,7 @@
     let timerKirimAntrian = null;
 
     function fetchDenganTimeout(url, opts, timeoutMs) {
-      const batas = timeoutMs || API_TIMEOUT_MS;
+      const batas = timeoutMs || (opts && opts.batasMs) || API_TIMEOUT_MS;
       if (typeof AbortController === 'undefined') return fetch(url, opts);
       const ctrl = new AbortController();
       const timer = setTimeout(function () { ctrl.abort(); }, batas);
@@ -1895,7 +1931,7 @@
       let kegagalanTerakhir = null;
       // Opsi per-panggilan (mis. login: gagal cepat, jangan menggantung kasir):
       // timeout & jumlah percobaan bisa dipendekkan tanpa mengubah perilaku aksi lain.
-      const TIMEOUT_PERCOBAAN = opsi.timeoutMs || API_TIMEOUT_MS;
+      const batasWaktu = opsi.timeoutMs || API_TIMEOUT_MS; // v81: BENAR-BENAR dipakai (bug lama: dihitung tapi tidak diteruskan ke fetch)
       const RETRY_MAKS_AKSI = opsi.retryMaks || API_RETRY_MAKS;
 
       // Cache pendek (3 detik) untuk aksi BACA berulang: sync 10 detik dari banyak
@@ -1934,6 +1970,7 @@
           const penghalusCache = (API_URL.indexOf('?') === -1 ? '?' : '&') + '_cb=' + Date.now() + '-' + percobaan;
           const response = await fetchDenganTimeout(API_URL + penghalusCache, {
             method: 'POST',
+            batasMs: batasWaktu,
             headers: {
               'Content-Type': 'text/plain;charset=utf-8',
               'Accept': 'application/json'
@@ -1997,7 +2034,7 @@
           console.warn('[POS API] fallback ke GET untuk', action);
           const argsUntukUrl = (action === 'getInitialData') ? [60] : args;
           const urlGet = API_URL + '?action=' + encodeURIComponent(action) + '&args=' + encodeURIComponent(JSON.stringify(Array.isArray(argsUntukUrl) ? argsUntukUrl : [argsUntukUrl])) + (koneksiId ? '&koneksiId=' + encodeURIComponent(koneksiId) : '') + '&_cb=' + Date.now();
-          const response = await fetchDenganTimeout(urlGet, { method: 'GET', headers: { 'Accept': 'application/json' } });
+          const response = await fetchDenganTimeout(urlGet, { method: 'GET', headers: { 'Accept': 'application/json' }, batasMs: batasWaktu });
           const text = await response.text();
           if (!text || String(text).trim().charAt(0) === '<') {
             throw new Error('Respons GET bukan JSON');
@@ -2276,6 +2313,9 @@
       const p = document.getElementById('passInp').value;
       if (!u || !p) return alert('Isi username dan password!');
 
+      // Debug log alur login (TANPA kredensial) — memudahkan diagnosis dari HP.
+      console.log('[POS] LOGIN START');
+
       const btn = document.getElementById('loginBtn');
       if (btn) {
         btn.disabled = true;
@@ -2287,11 +2327,13 @@
       // tombol kembali aktif dengan pesan jelas; tekan MASUK sekali lagi untuk retry.
       const opsiLogin = { timeoutMs: 6000, retryMaks: 2 };
       safeGoogleRun('checkLogin', [u, p], function (res) {
+        console.log('[POS] LOGIN REQUEST SENT');
         if (btn) {
           btn.disabled = false;
           btn.innerHTML = '<i class="fa-solid fa-right-to-bracket"></i> MASUK';
         }
         if (res && res.status) {
+          console.log('[POS] LOGIN SUCCESS — buka halaman POS');
           document.getElementById('loginPage').classList.add('hidden');
           document.getElementById('mainPage').classList.remove('hidden');
 
@@ -2326,6 +2368,7 @@
           btn.innerHTML = '<i class="fa-solid fa-right-to-bracket"></i> MASUK';
         }
         const pesan = err && err.message ? err.message : String(err);
+        console.log('[POS] LOGIN FAILURE:', pesan);
         alert(pesan.indexOf('salah') !== -1 ? pesan :
           'Koneksi lambat/terputus saat masuk.\n\nPeriksa sinyal internet lalu tekan MASUK lagi.\n' +
           '(Detail: ' + pesan + ')');
@@ -2681,6 +2724,7 @@
     function refreshData(silent, trueSync) {
       if (isRefreshingData) return; // cegah request menumpuk
       isRefreshingData = true;
+      console.log('[POS] PRODUCT REFRESH START (trueSync=' + !!trueSync + ')');
       safeGoogleRun('getInitialData', [60], result => {
         isRefreshingData = false;
         simpanDanRenderData(result);
@@ -2725,8 +2769,11 @@
         console.warn("Gagal sinkronisasi cache stok lokal:", e);
       }
 
-      // Render ulang agar tabel stok & dropdown langsung menampilkan angka baru
-      renderFromCache();
+      // Render ulang agar tabel stok & dropdown langsung menampilkan angka baru.
+      // v81: renderDataPaksa (bukan renderFromCache) — guard isUserInteracting
+      // bisa saja masih aktif di HP (fokus input tidak lepas), dan stok hasil
+      // checkout WAJIB tampil seketika tanpa menunggu interaksi selesai.
+      renderDataPaksa();
     }
 
     function aksiTambahStok(id, nama) {
@@ -3052,6 +3099,7 @@
         btnCheckout.style.pointerEvents = kunci ? 'none' : '';
       };
       kunciTombol(true);
+      console.log('[POS] CHECKOUT START —', cart.length, 'item');
 
       // Id transaksi LOKAL + koneksiId unik (idempotensi): dibuat SEKALI per tekanan
       // tombol sehingga kirim ulang dari antrian tidak pernah dobel-catat di server.
@@ -3062,6 +3110,7 @@
       safeGoogleRun('prosesCheckout', [cart, metode, uangDibayar], function (res) {
         kunciTombol(false);
         if (res.status === 'success') {
+          console.log('[POS] CHECKOUT SUCCESS —', res.transaksi, '| optimistic stok + refresh latar belakang dimulai');
           const itemsTerjual = Array.isArray(cart) ? cart.slice() : [];
           // Struk muncul SEKETIKA dari data hasil checkout server — TANPA menunggu
           // refresh data (dulu struk baru tampil setelah getInitialData selesai,
@@ -3137,6 +3186,7 @@
         } else {
           alert('Checkout gagal: ' + msg);
         }
+        console.log('[POS] CHECKOUT FAILURE:', msg);
         console.error('Checkout error:', err);
       }, koneksiId);
     }

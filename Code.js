@@ -91,6 +91,51 @@ function eksekusiAksi(requestData) {
   return result;
 }
 
+/**
+ * Jalankan fn di bawah kunci tulis script-wide (LockService, v81).
+ * Mencegah dua checkout/tambah-stok yang tiba BERSAMAAN dari perangkat berbeda
+ * membaca stok yang sama lalu saling menimpa (race condition multi-perangkat —
+ * jaringan mobile yang lambat memperbesar peluang tumpang-tindih). Lock menunggu
+ * maks 20 dtk; bila tidak diperoleh, fn tetap dijalankan TANPA lock agar
+ * transaksi kasir tidak pernah diblokir hanya karena lock.
+ */
+function denganKunciTulis(fn) {
+  let kunci = null;
+  try {
+    kunci = LockService.getScriptLock();
+  } catch (e) {
+    kunci = null; // LockService tidak tersedia (mis. lingkungan uji)
+  }
+  let pegang = false;
+  if (kunci && typeof kunci.tryLock === 'function') {
+    try { pegang = kunci.tryLock(20000); } catch (e) { pegang = false; }
+  }
+  if (!pegang) {
+    Logger.log('denganKunciTulis: lock tidak diperoleh, lanjut tanpa lock.');
+    return fn();
+  }
+  try {
+    return fn();
+  } finally {
+    try { kunci.releaseLock(); } catch (e) { }
+  }
+}
+
+// prosesCheckout & tambahStokProduk dieksekusi berurutan di bawah kunci tulis
+// (fungsi inti di-rename dengan akhiran "Inti"; deklarasi function hoist
+// sehingga wrapper boleh didefinisikan sebelum intinya).
+function prosesCheckout(cart, metode, uangDibayar, requestData) {
+  return denganKunciTulis(function () {
+    return prosesCheckoutInti(cart, metode, uangDibayar, requestData);
+  });
+}
+
+function tambahStokProduk(idProduk, qtyTambah, role) {
+  return denganKunciTulis(function () {
+    return tambahStokProdukInti(idProduk, qtyTambah, role);
+  });
+}
+
 // Salin koneksiId dari query string (?koneksiId=...) ke requestData sebelum
 // diteruskan ke eksekusiAksi, agar idempotensi juga bekerja di jalur GET.
 function sisipkanKoneksiIdDariQuery(requestData, e) {
@@ -323,7 +368,7 @@ function getProdukData() {
 /**
  * Tambah Stok
  */
-function tambahStokProduk(idProduk, qtyTambah, role) {
+function tambahStokProdukInti(idProduk, qtyTambah, role) {
 
   // Enforce permission on server side
   if (role !== 'SUPER_ADMIN' && role !== 'KASIR') {
@@ -578,7 +623,7 @@ function getInitialData(limitPenjualan) {
 /**
  * Checkout
  */
-function prosesCheckout(cart, metode, uangDibayar, requestData) {
+function prosesCheckoutInti(cart, metode, uangDibayar, requestData) {
   try {
     if (!Array.isArray(cart) || cart.length === 0) {
       return { status: "error", message: "Keranjang masih kosong." };
