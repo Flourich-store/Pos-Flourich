@@ -566,9 +566,10 @@ function getInitialData(limitPenjualan) {
 
   // ─── 2. PENJUALAN DATA (batch getValues) ───
   const shPenjualan = ss.getSheetByName("Penjualan");
-  // v83: header payload hanya 8 kolom (senada baris data — kolom 8-10 tidak
-  // dikirim ke klien; frontend membaca baris data mulai index 1).
-  const penjualanHeader = ['id', 'tanggal', 'namaProduk', 'jumlah', 'totalHarga', 'metode', 'uangDibayar', 'uangKembali'];
+  // v84: kolom 8-10 (Modal, biayaOperasional, labaBersih) DIKIRIM LAGI —
+  // frontend menuntut panjang header == panjang baris data. Mismatch
+  // header-11/data-8 pada v83 adalah penyebab bug live "struktur data berubah".
+  const penjualanHeader = ['id', 'tanggal', 'namaProduk', 'jumlah', 'totalHarga', 'metode', 'uangDibayar', 'uangKembali', 'Modal', 'biayaOperasional', 'labaBersih'];
   let penjualanResult = [penjualanHeader];
 
   if (shPenjualan) {
@@ -605,12 +606,13 @@ function getInitialData(limitPenjualan) {
           Number(row[4] || 0),
           String(row[5] || ""),
           Number(row[6] || 0),
-          Number(row[7] || 0)
-          // Fase 1 (v83): kolom 8-10 (Modal, biayaOperasional, labaBersih) TIDAK
-          // dikirim ke klien — hasil dependency check: POS frontend hanya membaca
-          // kolom 0-7; dashboard getPenjualanReport membaca langsung dari sheet;
-          // tidak ada export CSV. Sheet tetap menulis 11 kolom (prosesCheckout
-          // tidak berubah) — yang dirampingkan hanya payload jaringan.
+          Number(row[7] || 0),
+          Number(row[8] || 0),
+          Number(row[9] || 0),
+          Number(row[10] || 0)
+          // v84: kolom 8-10 (Modal, biayaOperasional, labaBersih) ikut dikirim
+          // agar header & baris data sama panjang (11) — baris historis lama
+          // yang kosong/pandek ditampilkan 0, sama seperti sheet.
         ]);
       }
     }

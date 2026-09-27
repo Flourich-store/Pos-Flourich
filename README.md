@@ -91,8 +91,21 @@ node tests/audit_input.test.js
   stok sheet tidak disentuh (stok manual); uang kurang ditolak konsisten oleh
   frontend & backend.
 
-### Perbaikan v84 — Fase 2: ikon SVG inline (FontAwesome dihapus)
+### Perbaikan v84 — Fase 2: ikon SVG inline (FontAwesome dihapus) + fix payload riwayat
 
+- **FIX BUG LIVE "struktur data berubah"**: trim payload v83 membuat header 11
+  elemen vs baris data 8 elemen — mismatch yang ditolak frontend (login nyangkut
+  "MEMPROSES..." dengan alert struktur tidak valid di device lama). Payload
+  `getInitialData` kembali konsisten 11 kolom (header == data) — kompatibel ke
+  SEMUA frontend, termasuk halaman lama yang masih ter-cache di browser user.
+- **Riwayat Penjualan sekarang tampil 11 kolom, sama persis dengan sheet**: ID,
+  Tanggal, Produk, Qty, Total, Metode, Uang Dibayar, Uang Kembali + Modal,
+  Biaya Operasional, Laba Bersih (permintaan: "kolom riwayat disamakan dengan
+  sheet Penjualan karena tata letak berbeda-beda"). Baris historis lama yang
+  kosong tampil Rp 0 — bukan error, menyesuaikan isi sheet.
+- Tes baru: payload mismatch ditolak aman tanpa crash; backend dijamin selalu
+  mengirim header == panjang baris (regresi v83 tidak akan terulang). Suite:
+  114 → 117 tes, semua hijau.
 - **Inventaris lengkap**: 28 glyph unik (27 statik + `eye-slash` dinamis) + animasi
   `fa-spin`. Mapping 1:1 ke SVG resmi Font Awesome Free 6.4.0 (CC BY 4.0) sebagai
   `<symbol>` inline sprite — dirender via `<use href="#icon-...">`.
@@ -105,7 +118,9 @@ node tests/audit_input.test.js
 - **Verifikasi nol dependensi**: 0 token `fa-*`, 0 tag `<i>`, 0 link font-awesome,
   0 request cdnjs. FA dihapus HANYA setelah semua 38 tag `<i>` terganti.
 - Regresi browser (mock lokal, produksi aman): login, toggle password, ikon kart/
-  navbar/modal/struk, checkout CASH (stok 50→49 instan), 360px tanpa overflow.
+  navbar/modal/struk, checkout CASH (stok berkurang instan + validasi uang kurang
+  tetap jalan), riwayat 11 kolom termasuk baris historis lama, 360px tanpa overflow
+  dokumen (tabel lebar scroll dalam wadah).
 
 ### Perbaikan v83 — Fase 1 optimasi performa
 

@@ -1851,11 +1851,14 @@
                   <th>Metode</th>
                   <th>Uang Dibayar</th>
                   <th>Uang Kembali</th>
+                  <th>Modal</th>
+                  <th>Biaya Operasional</th>
+                  <th>Laba Bersih</th>
                 </tr>
               </thead>
               <tbody>
                 <tr>
-                  <td colspan="8" style="text-align:center; color:#94a3b8; padding: 24px;">Memuat riwayat penjualan...
+                  <td colspan="11" style="text-align:center; color:#94a3b8; padding: 24px;">Memuat riwayat penjualan...
                   </td>
                 </tr>
               </tbody>
@@ -2968,7 +2971,7 @@
       tbodyJual.innerHTML = '';
 
       if (filteredPenjualanData.length === 0) {
-        tbodyJual.innerHTML = '<tr><td colspan="8" style="text-align:center; color:#94a3b8; padding:20px;">Tidak ada riwayat penjualan yang sesuai</td></tr>';
+        tbodyJual.innerHTML = '<tr><td colspan="11" style="text-align:center; color:#94a3b8; padding:20px;">Tidak ada riwayat penjualan yang sesuai</td></tr>';
         updatePaginationControls(0);
         return;
       }
@@ -2995,6 +2998,9 @@
           <td><span class="${badgeClass}">${row[5] || '-'}</span></td>
           <td>Rp ${Number(row[6] || 0).toLocaleString('id-ID')}</td>
           <td>Rp ${Number(row[7] || 0).toLocaleString('id-ID')}</td>
+          <td>Rp ${Number(row[8] || 0).toLocaleString('id-ID')}</td>
+          <td>Rp ${Number(row[9] || 0).toLocaleString('id-ID')}</td>
+          <td><b>Rp ${Number(row[10] || 0).toLocaleString('id-ID')}</b></td>
         </tr>`;
       }
       tbodyJual.innerHTML = barisHtml;

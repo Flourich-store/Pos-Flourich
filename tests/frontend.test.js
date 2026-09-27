@@ -8,7 +8,13 @@
  * ============================================================
  */
 
-const { createDomStub, loadFrontend, createRunner } = require('./helpers');
+const { createDomStub, loadFrontend, createRunner, createGasMock, loadBackend } = require('./helpers');
+
+const PRODUK_VALID = [
+  ['id', 'nama', 'stok', 'harga', 'foto_url'],
+  ['1', 'Semangci 250 ml', 50, 15000, ''],
+  ['2', 'Wonapel 250 ml', 30, 14000, '']
+];
 
 const r = createRunner();
 
@@ -44,6 +50,25 @@ r.suite('Frontend — inisialisasi data produk', () => {
     r.assertArray(app.get('masterData'), 'masterData harus array');
     r.assertArray(app.get('dataProduk'), 'dataProduk harus array');
     r.assertEq(app.get('dataProduk').length, 3, 'header + 2 produk');
+  });
+
+  r.test('REGRESI v83: payload header != panjang baris data ditolak, TIDAK crash, cache dibuang', () => {
+    // Rekonstruksi bug live @83: backend mengirim header 11 elemen tapi baris
+    // data hanya 8 (kolom Modal/biayaOperasional/labaBersih dipangkas).
+    // Frontend (dan frontend lama di device user) harus menolak payload ini
+    // dengan aman — jangan sampai rawPenjualanData diracuni lalu UI kacau.
+    const payloadBuruk = {
+      produk: RESPON_VALID.produk,
+      penjualan: [
+        ['id', 'tanggal', 'namaProduk', 'jumlah', 'totalHarga', 'metode', 'uangDibayar', 'uangKembali', 'Modal', 'biayaOperasional', 'labaBersih'],
+        ['FR-1', '13/09/2026 06:42', 'Semangci 350 ml', 0, 0, '1', 14000, null]
+      ],
+      timestamp: 1
+    };
+    const { app } = siapkanAplikasi(payloadBuruk);
+
+    r.assertDoesNotThrow(() => app.call('renderInitialData', payloadBuruk));
+    r.assertArray(app.get('rawPenjualanData'), 'rawPenjualanData tetap array');
   });
 
   r.test('getInitialData rusak (produk bukan array): dataProduk TETAP array kosong, tidak crash', () => {
@@ -168,8 +193,47 @@ r.suite('Frontend — cart korup & addToCart dengan data gagal dimuat', () => {
   });
 });
 
-r.suite('Frontend — mock mode lokal (file:)', () => {
+// ============================================================
+// PENJUALAN: konsistensi struktur payload (backend vs frontend)
+// ============================================================
 
+r.suite('Frontend — struktur payload penjualan (11 kolom, konsisten header==data)', () => {
+
+  const HEADER_11 = ['id', 'tanggal', 'namaProduk', 'jumlah', 'totalHarga', 'metode', 'uangDibayar', 'uangKembali', 'Modal', 'biayaOperasional', 'labaBersih'];
+
+  r.test('renderInitialData menerima payload 11 kolom konsisten: rawPenjualanData terisi utuh', () => {
+    const payload = {
+      produk: RESPON_VALID.produk,
+      penjualan: [
+        HEADER_11,
+        ['FR-1789256522360', '13/09/2026 06:42', 'Semangci 350 ml', 0, 0, '1', 14000, null, 15000, 1000, 0]
+      ],
+      timestamp: 1
+    };
+    const { app } = siapkanAplikasi(payload);
+
+    const raw = app.get('rawPenjualanData');
+    r.assertArray(raw, 'rawPenjualanData array');
+    r.assertEq(raw.length, 2, 'header + 1 baris');
+    r.assertEq(raw[0].length, 11, 'header 11 kolom');
+    r.assertEq(raw[1].length, 11, 'baris data 11 kolom');
+  });
+
+  r.test('backend getInitialData: header & baris data penjualan SAMA PANJANG (regresi mismatch v83)', () => {
+    const gas = createGasMock();
+    gas.scriptRuntime.activeSpreadsheet = gas.createSpreadsheetMock(PRODUK_VALID);
+    const backend = loadBackend(gas);
+
+    const hasil = backend.getInitialData(60);
+    const header = hasil.penjualan[0];
+    r.assertEq(header.length, 11, 'header 11 kolom');
+    for (let i = 1; i < hasil.penjualan.length; i++) {
+      r.assertEq(hasil.penjualan[i].length, header.length, 'baris ' + i + ' sama panjang dengan header');
+    }
+  });
+});
+
+r.suite('Frontend — mock mode lokal (file:)', () => {
   r.test('mock prosesCheckout tersedia & getInitialData mock terdefinisi', () => {
     const { app } = siapkanAplikasi(RESPON_VALID);
 
