@@ -262,6 +262,57 @@ function loadBackend(gas) {
 }
 
 /**
+ * Memuat Code.js + Diagnostik.js ke sandbox (fungsi diagnostik read-only).
+ * loadBackend() lama TIDAK diubah — Diagnostik.js tidak ikut di loader
+ * standar supaya suite regresi murni menguji kode produksi.
+ */
+function loadBackendDiagnostik(gas) {
+  const fs = require('fs');
+  const path = require('path');
+  const vm = require('vm');
+  const codeJs = fs.readFileSync(path.join(__dirname, '..', 'Code.js'), 'utf8');
+  const diagJs = fs.readFileSync(path.join(__dirname, '..', 'Diagnostik.js'), 'utf8');
+
+  const sandbox = {
+    Logger: gas.Logger,
+    PropertiesService: gas.PropertiesService,
+    SpreadsheetApp: gas.SpreadsheetApp,
+    DriveApp: gas.DriveApp,
+    Utilities: gas.Utilities,
+    ScriptApp: gas.ScriptApp,
+    LockService: gas.LockService,
+    ContentService: gas.ContentService,
+    HtmlService: gas.HtmlService,
+    Session: { getActiveUser: () => ({ getEmail: () => '' }) },
+    console: console
+  };
+  sandbox.globalThis = sandbox;
+
+  const ctx = vm.createContext(sandbox);
+  vm.runInContext(codeJs, ctx, { filename: 'Code.js' });
+  vm.runInContext(diagJs, ctx, { filename: 'Diagnostik.js' });
+
+  const KONST = {};
+  [
+    'PETA_KOLOM_PENJUALAN', 'PETA_KOLOM_PRODUK', 'ALIAS_PRODUK',
+    'HEADER_PENJUALAN_PAYLOAD', 'HEADER_PRODUK_PAYLOAD',
+    'AKSI_TULIS', 'RETRY_MAKS', 'QUEUE_MAKS'
+  ].forEach(nama => {
+    try { KONST[nama] = vm.runInContext(nama, ctx); } catch (e) { /* tidak ada */ }
+  });
+
+  return {
+    sandbox: sandbox,
+    KONST: KONST,
+    diagnostikModalTerakhir: sandbox.diagnostikModalTerakhir,
+    rencanaBackfillHistori: sandbox.rencanaBackfillHistori,
+    parseAngkaToleran: sandbox.parseAngkaToleran,
+    _perluRemap: sandbox._perluRemap,
+    __sandbox: sandbox
+  };
+}
+
+/**
  * Stub DOM + localStorage untuk menjalankan blok <script> index.html.
  */
 function createDomStub() {
@@ -568,4 +619,4 @@ function createRunner() {
   return { suite, test, assertEq, assertOk, assertArray, assertIncludes, assertNotIncludes, assertFalse, assertDoesNotThrow, run };
 }
 
-module.exports = { createGasMock, loadBackend, createDomStub, loadFrontend, createRunner };
+module.exports = { createGasMock, loadBackend, loadBackendDiagnostik, createDomStub, loadFrontend, createRunner };

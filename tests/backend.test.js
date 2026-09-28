@@ -7,7 +7,7 @@
  * ============================================================
  */
 
-const { createGasMock, loadBackend, createRunner } = require('./helpers');
+const { createGasMock, loadBackend, loadBackendDiagnostik, createRunner } = require('./helpers');
 
 const r = createRunner();
 
@@ -692,6 +692,195 @@ r.suite('Staging — ujiStagingPenjualan (fungsi uji tulis ke sheet dev)', () =>
     const sisa = spreadsheet.__penjualan.__rows().filter((row, i) =>
       i > 523 && row.some(c => String(c == null ? '' : c).trim() !== ''));
     r.assertEq(sisa.length, 0, 'tidak ada jejak');
+  });
+});
+
+r.suite('Diagnostik — parseAngkaToleran (parser angka format Indonesia)', () => {
+  function setup() {
+    const gas = createGasMock();
+    const backend = loadBackendDiagnostik(gas);
+    return { gas, backend };
+  }
+
+  r.test('titik = pemisah ribuan, koma = desimal, Rp/spasi dibuang', () => {
+    const { backend } = setup();
+    r.assertEq(backend.parseAngkaToleran('12.000'), 12000, '12.000 -> 12000');
+    r.assertEq(backend.parseAngkaToleran('Rp 12.000'), 12000, 'Rp 12.000 -> 12000');
+    r.assertEq(backend.parseAngkaToleran('1.234,56'), 1234.56, '1.234,56 -> 1234.56');
+    r.assertEq(backend.parseAngkaToleran('10,5'), 10.5, '10,5 -> 10.5');
+    r.assertEq(backend.parseAngkaToleran('10500'), 10500, '10500 -> 10500');
+    r.assertEq(backend.parseAngkaToleran(9500), 9500, 'angka murni');
+  });
+
+  r.test('tidak bisa diurai -> NaN', () => {
+    const { backend } = setup();
+    r.assertOk(Number.isNaN(backend.parseAngkaToleran('abc')), 'teks murni -> NaN');
+    r.assertOk(Number.isNaN(backend.parseAngkaToleran('')), 'string kosong -> NaN');
+    r.assertOk(Number.isNaN(backend.parseAngkaToleran(null)), 'null -> NaN');
+  });
+});
+
+r.suite('Diagnostik — diagnostikModalTerakhir (baca & klasifikasi baris)', () => {
+  const H13 = ['ID Transaksi', 'Tanggal', 'Nama Produk', 'Volume (ml)', 'HPP Satuan', 'Jumlah', 'Total Harga',
+    'Metode Pembayaran', 'Uang Dibayar', 'Uang Kembali', 'Modal', 'Biaya Operasional', 'Laba bersih'];
+  const HPP = ['ID Produk', 'Nama Produk', 'Stok', 'Harga', 'foto_url', 'HPP', 'volume_ml'];
+
+  function setup(penjualanRows) {
+    const gas = createGasMock();
+    gas.scriptRuntime.props.ENV = 'production';
+    const spreadsheet = gas.createSpreadsheetMock([
+      [HPP[0], HPP[1], HPP[2], HPP[3], HPP[4], HPP[5], HPP[6]],
+      ['PD001', 'Wonapel 250 ml', 50, 15000, '', 9500, 250],
+      ['PD002', 'Semangci 350 ml', 9, 14000, '', '10.500', 350]  // HPP sebagai TEKS format id
+    ], { penjualanRows: penjualanRows, penjualanMinRows: 1000 });
+    gas.scriptRuntime.activeSpreadsheet = spreadsheet;
+    const backend = loadBackendDiagnostik(gas);
+    return { gas, backend, spreadsheet };
+  }
+
+  const BARIS_BARU = ['FR-NEW1', '20/09/2026 10:00', 'Wonapel 250 ml', 250, 9500, 1, 15000, 'QRIS', 15000, 0, 9500, 0, 5500];
+  const BARIS_LAMA = ['FR-1790513368295', '15/09/2026 09:30', 'Wonapel 250 ml', 1, 12000, 250, 9500, 'QRIS', 12000, 0, 9500, '', '']; // D=jumlah E=total F=volume G=HPP
+  const BARIS_HPP_TEKS = ['FR-TEKS1', '21/09/2026 11:00', 'Semangci 350 ml', 350, '10.500', 2, 28000, 'CASH', 28000, 0, 21000, 0, 7000];
+
+  r.test('baris BARU (13 kolom benar) -> modal-sesuai, perluRemap TIDAK', () => {
+    const { backend } = setup([H13, BARIS_BARU]);
+    const logs = backend.diagnostikModalTerakhir(5);
+    const obj = logs.slice(0, -1).map(s => JSON.parse(s));
+    const b = obj.find(o => o.id === 'FR-NEW1');
+    r.assertEq(b.status, 'modal-sesuai', 'modal cocok jumlah x HPP');
+    r.assertIncludes(b.perluRemap, 'TIDAK', 'L&M terisi -> kode baru');
+    r.assertEq(b.hppProdukRaw, 9500, 'HPP master terbaca');
+    r.assertEq(b.hitungUlangModal, 9500, '1 x 9500');
+  });
+
+  r.test('baris LAMA (writer hybrid tergeser) -> terdeteksi + cetak Kolom A-M mentah', () => {
+    const { backend } = setup([H13, BARIS_LAMA]);
+    const logs = backend.diagnostikModalTerakhir('FR-1790513368295');
+    const obj = logs.slice(0, -1).map(s => JSON.parse(s));
+    const b = obj.find(o => o.id === 'FR-1790513368295');
+    r.assertOk(b, 'baris dengan ID itu ditemukan');
+    r.assertIncludes(b.perluRemap, 'YA', 'L&M kosong -> ditulis writer lama');
+    // Kolom A-M RAW membuktikan pergeseran: F(=jumlah) berisi 250 (volume),
+    // G(=totalHarga) berisi 9500 (HPP), D berisi 1 (jumlah sebenarnya).
+    r.assertEq(b.kolomA_M.jumlah, 250, 'Kolom F (Jumlah) = 250 = volume, bukan qty');
+    r.assertEq(b.kolomA_M.totalHarga, 9500, 'Kolom G (Total Harga) = 9500 = HPP');
+    r.assertEq(b.kolomA_M.volumeMl, 1, 'Kolom D (Volume) = 1 = jumlah sebenarnya');
+    r.assertEq(b.kolomA_M.hppSatuan, 12000, 'Kolom E (HPP Satuan) = 12000 = total sebenarnya');
+    r.assertEq(b.status, 'modal-beda', 'posisi sekarang (F=250) menyebabkan modal "beda"');
+    // Dengan asumsi remap D=jumlah: modal target = 1 x 9500 = 9500 = K sheet.
+    r.assertEq(b.hitungUlangModalRemap, 9500, 'D x HPP master cocok dengan K sheet -> hipotesis tegak');
+  });
+
+  r.test('HPP sheet bertipe TEKS "10.500" tetap terbaca toleran (10500)', () => {
+    const { backend } = setup([H13, BARIS_HPP_TEKS]);
+    const logs = backend.diagnostikModalTerakhir('FR-TEKS1');
+    const obj = logs.slice(0, -1).map(s => JSON.parse(s));
+    const b = obj.find(o => o.id === 'FR-TEKS1');
+    r.assertEq(b.hppProdukRaw, '10.500', 'nilai mentah teks dipertahankan');
+    r.assertEq(b.hppProdukAngka, 10500, 'parser toleran mengubah menjadi 10500');
+    r.assertEq(b.status, 'modal-sesuai', 'modal 2 x 10500 = 21000 cocok');
+  });
+
+  r.test('produk tidak dikenal -> status produk-tidak-ditemukan', () => {
+    const { backend } = setup([H13, ['FR-XXX1', '20/09/2026 10:00', 'Produk Khayalan 999 ml', 999, 1, 1, 5000, 'CASH', 5000, 0, 1, 0, 1]]);
+    const logs = backend.diagnostikModalTerakhir('FR-XXX1');
+    const obj = logs.slice(0, -1).map(s => JSON.parse(s));
+    const b = obj.find(o => o.id === 'FR-XXX1');
+    r.assertEq(b.status, 'produk-tidak-ditemukan', 'dilaporkan, bukan modal 0 diam-diam');
+  });
+});
+
+r.suite('Diagnostik — rencanaBackfillHistori (dry-run, tanpa menulis)', () => {
+  const H13 = ['ID Transaksi', 'Tanggal', 'Nama Produk', 'Volume (ml)', 'HPP Satuan', 'Jumlah', 'Total Harga',
+    'Metode Pembayaran', 'Uang Dibayar', 'Uang Kembali', 'Modal', 'Biaya Operasional', 'Laba bersih'];
+  const HPP = ['ID Produk', 'Nama Produk', 'Stok', 'Harga', 'foto_url', 'HPP', 'volume_ml'];
+
+  function setup() {
+    const gas = createGasMock();
+    gas.scriptRuntime.props.ENV = 'production';
+    const spreadsheet = gas.createSpreadsheetMock([
+      [HPP[0], HPP[1], HPP[2], HPP[3], HPP[4], HPP[5], HPP[6]],
+      ['PD001', 'Wonapel 250 ml', 50, 15000, '', 9500, 250],
+      ['PD002', 'Semangci 350 ml', 9, 14000, '', 8000, 350],
+      ['PD003', 'Produk Tanpa HPP 500 ml', 3, 20000, '', '', 500]
+    ], { penjualanRows: [
+      H13,
+      // baris BARU benar (harus ok, TIDAK dicetak di mode ringkas)
+      ['FR-BARU1', '22/09/2026 10:00', 'Semangci 350 ml', 350, 8000, 2, 28000, 'CASH', 28000, 0, 16000, 0, 12000],
+      // baris LAMA tergeser: D=jumlah(1) E=total(12000) F=volume(250) G=hpp(9500) H=QRIS I=12000 J=0 K=9500 L,M=''
+      ['FR-LAMA1', '10/09/2026 09:00', 'Wonapel 250 ml', 1, 12000, 250, 9500, 'QRIS', 12000, 0, 9500, '', ''],
+      // produk tidak ditemukan
+      ['FR-HANTU1', '11/09/2026 08:00', 'Minuman Ajaib 300 ml', 1, 5000, 300, 4000, 'CASH', 5000, 0, 0, '', ''],
+      // HPP master kosong -> hpp-tidak-tersedia
+      ['FR-KOSONG1', '12/09/2026 07:00', 'Produk Tanpa HPP 500 ml', 1, 20000, 500, 16000, 'CASH', 20000, 0, 0, '', '']
+    ], penjualanMinRows: 1000 });
+    gas.scriptRuntime.activeSpreadsheet = spreadsheet;
+    const backend = loadBackendDiagnostik(gas);
+    return { gas, backend, spreadsheet };
+  }
+
+  r.test('mode default (ringkas): ringkasan + HANYA baris non-ok, ok hanya di contohOk', () => {
+    const { backend } = setup();
+    const logs = backend.rencanaBackfillHistori();
+    const obj = logs.map(s => JSON.parse(s));
+    const ring = obj.find(o => o.RINGKASAN);
+    r.assertEq(ring.RINGKASAN.totalBaris, 4, '4 baris data diproses');
+    r.assertEq(ring.RINGKASAN.ok_tanpa_perubahan, 1, '1 baris baru sudah benar');
+    r.assertEq(ring.RINGKASAN.layout_tergeser, 1, '1 baris lama tergeser');
+    r.assertEq(ring.RINGKASAN.produk_tidak_ditemukan, 1, '1 produk tidak ditemukan');
+    r.assertEq(ring.RINGKASAN.hpp_tidak_tersedia, 1, '1 HPP master kosong');
+    r.assertEq(ring.RINGKASAN.barisNonOk, 3, '3 non-ok dicetak rinci');
+    const cetak = obj.filter(o => o.barisSheet);
+    r.assertEq(cetak.length, 3, 'hanya non-ok yang dicetak di mode ringkas');
+    r.assertEq(cetak.every(o => o.status !== 'ok-tanpa-perubahan'), true, 'tidak ada baris ok ikut tercetak');
+  });
+
+  r.test('baris LAMA -> sesudah = layout 13 kolom yg benar (volume 250, hpp 9500, modal 9500, laba 2500)', () => {
+    const { backend } = setup();
+    // Cari baris lama di log mode ringkas
+    const logs = backend.rencanaBackfillHistori([2, 10]);   // mode detail, semua baris dicetak
+    const obj = logs.map(s => JSON.parse(s));
+    // RINGKASAN terlebih dahulu
+    const b = obj.find(o => o.status === 'layout-tergeser' && o.id === 'FR-LAMA1');
+    r.assertOk(b, 'baris lama berstatus layout-tergeser');
+    r.assertEq(b.era, 'BARU13', 'writer lama masih tampak bentuk BARU13 (metode di H)');
+    // Nilai MENTAH yang tersimpan (kondisi saat ini, sebelum remap):
+    r.assertEq(b.sebelum.sheetPerKolom.D, 1, 'kolom D tersimpan 1 = jumlah sebenarnya');
+    r.assertEq(b.sebelum.sheetPerKolom.E, 12000, 'kolom E tersimpan 12000 = total sebenarnya');
+    r.assertEq(b.sebelum.sheetPerKolom.F, 250, 'kolom F tersimpan 250 = volume (bukan qty)');
+    r.assertEq(b.sebelum.sheetPerKolom.G, 9500, 'kolom G tersimpan 9500 = HPP (bukan total)');
+    r.assertEq(b.sebelum.sheetPerKolom.K, 9500, 'kolom K tersimpan 9500 = modal (bener)');
+    // Interpretasi semantik (dari posisi terukur D=jumlah dst.):
+    r.assertEq(b.sebelum.jumlah, 1, 'jumlah = 1 (dari D)');
+    r.assertEq(b.sebelum.totalHarga, 12000, 'total = 12000 (dari E)');
+    r.assertEq(b.sesudah.volumeMl, 250, 'target Volume = 250 (dari F)');
+    r.assertEq(b.sesudah.hppSatuan, 9500, 'target HPP = 9500 (dari master)');
+    r.assertEq(b.sesudah.jumlah, 1, 'target Jumlah = 1 (dari D)');
+    r.assertEq(b.sesudah.totalHarga, 12000, 'target Total = 12000 (dari E)');
+    r.assertEq(b.sesudah.metode, 'QRIS', 'target metode = H');
+    r.assertEq(b.sesudah.modal, 9500, 'target Modal = 1 x 9500');
+    r.assertEq(b.sesudah.labaBersih, 2500, 'target Laba = 12000 - 9500');
+  });
+
+  r.test('produk tidak ditemukan & HPP kosong -> DIKECUALIKAN, bukan dihitung paksa', () => {
+    const { backend } = setup();
+    const logs = backend.rencanaBackfillHistori([2, 10]);
+    const obj = logs.map(s => JSON.parse(s));
+    const hantu = obj.find(o => o.id === 'FR-HANTU1');
+    r.assertEq(hantu.status, 'produk-tidak-ditemukan', 'tidak dihitung paksa');
+    r.assertEq(hantu.sesudah.modal, null, 'modal target kosong (tidak mengarang)');
+    const kosong = obj.find(o => o.id === 'FR-KOSONG1');
+    r.assertEq(kosong.status, 'hpp-tidak-tersedia', 'HPP master kosong -> dikecualikan');
+    r.assertEq(kosong.sesudah.hppSatuan, null, 'HPP target kosong (tidak mengarang)');
+  });
+
+  r.test('baris BARU ok tidak masuk rencana tulis', () => {
+    const { backend } = setup();
+    const logs = backend.rencanaBackfillHistori([2, 10]);
+    const obj = logs.map(s => JSON.parse(s));
+    const baru = obj.find(o => o.id === 'FR-BARU1');
+    r.assertEq(baru.status, 'ok-tanpa-perubahan', 'baris baru sudah benar, tanpa tulis ulang');
+    r.assertEq(baru.sesudah.modal, 16000, '2 x 8000 = 16000 sesuai sheet');
   });
 });
 
