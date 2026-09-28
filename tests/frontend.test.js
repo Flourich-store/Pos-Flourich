@@ -197,16 +197,19 @@ r.suite('Frontend — cart korup & addToCart dengan data gagal dimuat', () => {
 // PENJUALAN: konsistensi struktur payload (backend vs frontend)
 // ============================================================
 
-r.suite('Frontend — struktur payload penjualan (11 kolom, konsisten header==data)', () => {
+// FIX 6: sheet Penjualan sekarang 13 kolom (Volume (ml) & HPP Satuan
+// disisipkan di tengah, Laba bersih jadi kolom terakhir). Payload WAJIB
+// 13 kolom supaya frontend tidak pernah mengira posisi kolom tetap.
+r.suite('Frontend - struktur payload penjualan (13 kolom, konsisten header==data)', () => {
 
-  const HEADER_11 = ['id', 'tanggal', 'namaProduk', 'jumlah', 'totalHarga', 'metode', 'uangDibayar', 'uangKembali', 'Modal', 'biayaOperasional', 'labaBersih'];
+  const HEADER_13 = ['id', 'tanggal', 'namaProduk', 'volumeMl', 'hppSatuan', 'jumlah', 'totalHarga', 'metode', 'uangDibayar', 'uangKembali', 'modal', 'biayaOperasional', 'labaBersih'];
 
-  r.test('renderInitialData menerima payload 11 kolom konsisten: rawPenjualanData terisi utuh', () => {
+  r.test('renderInitialData menerima payload 13 kolom konsisten: rawPenjualanData terisi utuh', () => {
     const payload = {
       produk: RESPON_VALID.produk,
       penjualan: [
-        HEADER_11,
-        ['FR-1789256522360', '13/09/2026 06:42', 'Semangci 350 ml', 0, 0, '1', 14000, null, 15000, 1000, 0]
+        HEADER_13,
+        ['FR-1789256522360', '13/09/2026 06:42', 'Semangci 350 ml', 350, 9000, 1, 14000, 'QRIS', 14000, 0, 9000, 0, 5000]
       ],
       timestamp: 1
     };
@@ -215,8 +218,16 @@ r.suite('Frontend — struktur payload penjualan (11 kolom, konsisten header==da
     const raw = app.get('rawPenjualanData');
     r.assertArray(raw, 'rawPenjualanData array');
     r.assertEq(raw.length, 2, 'header + 1 baris');
-    r.assertEq(raw[0].length, 11, 'header 11 kolom');
-    r.assertEq(raw[1].length, 11, 'baris data 11 kolom');
+    r.assertEq(raw[0].length, 13, 'header 13 kolom');
+    r.assertEq(raw[1].length, 13, 'baris data 13 kolom');
+
+    // Guard eksplisit terhadap bug asli: QTY pernah terbaca dari kolom
+    // Volume (ml) dan Total Harga pernah terbaca dari HPP Satuan.
+    const row = raw[1];
+    r.assertEq(row[5], 1, 'kolom ke-6 (Jumlah) = 1, bukan volume 350');
+    r.assertEq(row[3], 350, 'kolom ke-4 (Volume ml) = 350');
+    r.assertEq(row[4], 9000, 'kolom ke-5 (HPP Satuan) = 9000');
+    r.assertEq(row[6], 14000, 'kolom ke-7 (Total Harga) = 14000 = harga x qty, bukan HPP');
   });
 
   r.test('backend getInitialData: header & baris data penjualan SAMA PANJANG (regresi mismatch v83)', () => {
@@ -226,7 +237,7 @@ r.suite('Frontend — struktur payload penjualan (11 kolom, konsisten header==da
 
     const hasil = backend.getInitialData(60);
     const header = hasil.penjualan[0];
-    r.assertEq(header.length, 11, 'header 11 kolom');
+    r.assertEq(header.length, 13, 'header 13 kolom');
     for (let i = 1; i < hasil.penjualan.length; i++) {
       r.assertEq(hasil.penjualan[i].length, header.length, 'baris ' + i + ' sama panjang dengan header');
     }

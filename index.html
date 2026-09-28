@@ -1572,6 +1572,16 @@
   <!-- MOCK BACKEND untuk testing lokal -->
   <script>
     if (window.location.protocol === 'file:') {
+      // Hitung volume (ml) dari nama produk utk kolom Volume (ml) — senada
+      // dengan hitungVolumeMl() di backend.
+      function hitungVolumeMlLocal(nama) {
+        const s = String(nama || '');
+        const m = s.match(/(\d{3,4})\s*ml/i) || s.match(/\b(\d{3,4})\b/);
+        if (!m) return '';
+        const v = Number(m[1]);
+        return (v >= 100 && v <= 1999) ? v : '';
+      }
+
       const MOCK_DATA = {
         users: [
           ['admin', 'password', 'SUPER_ADMIN'],
@@ -1579,10 +1589,10 @@
           ['user', '123456', 'USER']
         ],
         products: [
-          ['1', 'Semangci 250 ml', 50, 15000, 'https://lh3.googleusercontent.com/d/1l6nzRw-zHCuSlE7tFfl1xPTFvvZZn_sU'],
-          ['2', 'Wonapel 250 ml', 50, 15000, 'https://lh3.googleusercontent.com/d/1l6nzRw-zHCuSlE7tFfl1xPTFvvZZn_sU'],
-          ['3', 'Semangci', 40, 12000, 'https://lh3.googleusercontent.com/d/1l6nzRw-zHCuSlE7tFfl1xPTFvvZZn_sU'],
-          ['4', 'Wonapel', 35, 14000, 'https://lh3.googleusercontent.com/d/1l6nzRw-zHCuSlE7tFfl1xPTFvvZZn_sU']
+          ['1', 'Semangci 250 ml', 50, 15000, 'https://lh3.googleusercontent.com/d/1l6nzRw-zHCuSlE7tFfl1xPTFvvZZn_sU', 11250, 250],
+          ['2', 'Wonapel 250 ml', 50, 15000, 'https://lh3.googleusercontent.com/d/1l6nzRw-zHCuSlE7tFfl1xPTFvvZZn_sU', 11000, 250],
+          ['3', 'Semangci', 40, 12000, 'https://lh3.googleusercontent.com/d/1l6nzRw-zHCuSlE7tFfl1xPTFvvZZn_sU', 9000, ''],
+          ['4', 'Wonapel', 35, 14000, 'https://lh3.googleusercontent.com/d/1l6nzRw-zHCuSlE7tFfl1xPTFvvZZn_sU', 10500, '']
         ],
         transactions: []
       };
@@ -1600,12 +1610,12 @@
       };
 
       google.script.run.getProdukData = function () {
-        const header = ['id', 'nama', 'stok', 'harga', 'foto_url'];
+        const header = ['id', 'nama', 'stok', 'harga', 'foto_url', 'hpp'];
         return [header, ...MOCK_DATA.products];
       };
 
       google.script.run.getPenjualanData = function () {
-        const header = ['id', 'tanggal', 'namaProduk', 'jumlah', 'totalHarga', 'metode', 'uangDibayar', 'uangKembali'];
+        const header = ['id', 'tanggal', 'namaProduk', 'volumeMl', 'hppSatuan', 'jumlah', 'totalHarga', 'metode', 'uangDibayar', 'uangKembali', 'Modal', 'biayaOperasional', 'labaBersih'];
         const transactions = JSON.parse(localStorage.getItem('mock_transactions') || '[]');
         return [header, ...transactions];
       };
@@ -1652,17 +1662,37 @@
 
         const transactions = JSON.parse(localStorage.getItem('mock_transactions') || '[]');
         cart.forEach(item => {
+          // `prod` WAJIB dideklarasikan sebelum dipakai: const punya temporal
+          // dead zone, sedangkan di bawah hppSatuan sudah mereferensikannya.
+          const prod = MOCK_DATA.products.find(p => String(p[0]) === String(item.id));
+          const hppSatuan = (item.hpp != null && Number.isFinite(Number(item.hpp)) && Number(item.hpp) > 0)
+            ? Number(item.hpp)
+            : (prod ? (Number.isFinite(Number(prod[5])) && Number(prod[5]) > 0 ? Number(prod[5]) : 0) : 0);
+          // Volume diutamakan dari kolom volume_ml (payload produk index 6),
+          // sama seperti backend. Falls back ke hitungVolumeMlLocal(nama) hanya
+          // untuk produk lama yang kolomnya belum diisi — meniru Fix 4.
+          let volumeMl = (item.volume_ml != null && item.volume_ml !== '')
+            ? Number(item.volume_ml)
+            : (prod && prod[6] != null && prod[6] !== '' ? Number(prod[6]) : '');
+          if (volumeMl === '' || !Number.isFinite(Number(volumeMl))) {
+            volumeMl = hitungVolumeMlLocal(item.nama);
+          }
+          const totalModal = hppSatuan * Number(item.jumlah || 0);
           transactions.push([
             transaksi,
             tanggal.toLocaleString('id-ID'),
             item.nama,
+            volumeMl,
+            hppSatuan,
             item.jumlah,
             item.total,
             metode,
             uangDibayar,
-            uangKembali
+            uangKembali,
+            totalModal,
+            0,
+            Number(item.total || 0) - totalModal
           ]);
-          const prod = MOCK_DATA.products.find(p => String(p[0]) === String(item.id));
           if (prod) prod[2] -= Number(item.jumlah || 0);
         });
 
@@ -1846,6 +1876,8 @@
                   <th>ID Transaksi</th>
                   <th>Tanggal / Waktu</th>
                   <th>Nama Produk</th>
+                  <th>Volume (ml)</th>
+                  <th>HPP Satuan</th>
                   <th>Qty</th>
                   <th>Total Harga</th>
                   <th>Metode</th>
@@ -1858,7 +1890,7 @@
               </thead>
               <tbody>
                 <tr>
-                  <td colspan="11" style="text-align:center; color:#94a3b8; padding: 24px;">Memuat riwayat penjualan...
+                  <td colspan="13" style="text-align:center; color:#94a3b8; padding: 24px;">Memuat riwayat penjualan...
                   </td>
                 </tr>
               </tbody>
@@ -2971,7 +3003,7 @@
       tbodyJual.innerHTML = '';
 
       if (filteredPenjualanData.length === 0) {
-        tbodyJual.innerHTML = '<tr><td colspan="11" style="text-align:center; color:#94a3b8; padding:20px;">Tidak ada riwayat penjualan yang sesuai</td></tr>';
+        tbodyJual.innerHTML = '<tr><td colspan="13" style="text-align:center; color:#94a3b8; padding:20px;">Tidak ada riwayat penjualan yang sesuai</td></tr>';
         updatePaginationControls(0);
         return;
       }
@@ -2993,14 +3025,16 @@
           <td><span style="color:var(--primary); font-weight:700;">${row[0] || ''}</span></td>
           <td>${row[1] || ''}</td>
           <td><b>${row[2] || ''}</b></td>
-          <td>${row[3] || 0}</td>
-          <td><b>Rp ${Number(row[4] || 0).toLocaleString('id-ID')}</b></td>
-          <td><span class="${badgeClass}">${row[5] || '-'}</span></td>
-          <td>Rp ${Number(row[6] || 0).toLocaleString('id-ID')}</td>
-          <td>Rp ${Number(row[7] || 0).toLocaleString('id-ID')}</td>
+          <td>${row[3] === '' || row[3] == null ? '-' : row[3]}</td>
+          <td>Rp ${Number(row[4] || 0).toLocaleString('id-ID')}</td>
+          <td>${row[5] || 0}</td>
+          <td><b>Rp ${Number(row[6] || 0).toLocaleString('id-ID')}</b></td>
+          <td><span class="${badgeClass}">${row[7] || '-'}</span></td>
           <td>Rp ${Number(row[8] || 0).toLocaleString('id-ID')}</td>
           <td>Rp ${Number(row[9] || 0).toLocaleString('id-ID')}</td>
-          <td><b>Rp ${Number(row[10] || 0).toLocaleString('id-ID')}</b></td>
+          <td>Rp ${Number(row[10] || 0).toLocaleString('id-ID')}</td>
+          <td>Rp ${Number(row[11] || 0).toLocaleString('id-ID')}</td>
+          <td><b>Rp ${Number(row[12] || 0).toLocaleString('id-ID')}</b></td>
         </tr>`;
       }
       tbodyJual.innerHTML = barisHtml;
@@ -3050,7 +3084,9 @@
         exist.jumlah += qty;
         exist.total = exist.jumlah * prod[3];
       } else {
-        cart.push({ id: id, nama: prod[1], jumlah: qty, total: qty * prod[3] });
+        // hpp dibawa dari data produk (kolom 'hpp', layout sheet BARU) supaya
+        // backend mencatat HPP Satuan + Modal + Laba persis dari sheet Produk.
+        cart.push({ id: id, nama: prod[1], jumlah: qty, total: qty * prod[3], hpp: Number(prod[5] ?? 0) });
       }
 
       renderCart();

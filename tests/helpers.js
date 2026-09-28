@@ -46,6 +46,14 @@ function createGasMock() {
             rowVals.forEach((v, j) => { state.rows[r][col - 1 + j] = v; });
           });
         },
+        clearContent: () => {
+          for (let i = 0; i < (numRows || 1); i++) {
+            const r = row - 1 + i;
+            for (let c = 0; c < (numCols || 1); c++) {
+              if (state.rows[r]) state.rows[r][col - 1 + c] = '';
+            }
+          }
+        },
         setValue: function (v) {
           if (!state.rows[row - 1]) state.rows[row - 1] = [];
           state.rows[row - 1][col - 1] = v;
@@ -59,7 +67,18 @@ function createGasMock() {
       getName: () => state.name,
       getDataRange: () => rangeObj(1, 1, state.rows.length, Math.max(1, ...state.rows.map(r => r.length))),
       getRange: (row, col, numRows, numCols) => rangeObj(row, col, numRows, numCols),
-      getLastRow: () => state.rows.length,
+      // Sheets sungguhan: getLastRow = baris TERAKHIR yang punya isi, bukan
+      // jumlah baris tersimpan. Mock lama memakai rows.length, sehingga tidak
+      // bisa membedakan "524 baris data" dari "sheet 1000 baris".
+      getLastRow: () => {
+        for (let i = state.rows.length - 1; i >= 0; i--) {
+          const r = state.rows[i];
+          if (r && r.some(c => String(c == null ? '' : c).trim() !== '')) return i + 1;
+        }
+        return 0;
+      },
+      getMaxColumns: () => Math.max(1, ...state.rows.map(r => r.length)),
+      getMaxRows: () => Math.max(state.rows.length, options.minRows || 0),
       appendRow: (rowVals) => { state.rows.push(rowVals.slice()); return sheet; },
       __rows: () => state.rows.map(r => r.slice())
     };
@@ -74,8 +93,14 @@ function createGasMock() {
   function createSpreadsheetMock(rowsProduk, opts) {
     const options = opts || {};
     const produkSheet = makeSheet('Produk', rowsProduk, options.produkSheet);
-    const penjualanSheet = makeSheet('Penjualan',
-      [['id', 'tanggal', 'namaProduk', 'jumlah', 'totalHarga', 'metode', 'uangDibayar', 'uangKembali', 'Modal', 'biayaOperasional', 'labaBersih']]);
+    // Default = HEADER SAJA dengan layout 13 kolom era SEKARANG (Volume/HPP
+    // disisipkan di tengah, "Laba bersih" di akhir). Sheet Penjualan kosong
+    // adalah kondisi awal yang realistis. Test yang butuh baris penjualan
+    // mengoper options.penjualanRows sendiri.
+    const penjualanSheet = makeSheet('Penjualan', options.penjualanRows || [
+      ['ID Transaksi', 'Tanggal', 'Nama Produk', 'Volume (ml)', 'HPP Satuan', 'Jumlah', 'Total Harga',
+        'Metode Pembayaran', 'Uang Dibayar', 'Uang Kembali', 'Modal', 'Biaya Operasional', 'Laba bersih']
+    ], { minRows: options.penjualanMinRows || options.minRows });
     const userSheet = makeSheet('User', options.userRows || [
       ['username', 'password', 'role'],
       ['admin', 'password', 'SUPER_ADMIN'],
@@ -84,6 +109,9 @@ function createGasMock() {
 
     return {
       getSpreadsheetTimeZone: () => 'Asia/Jakarta',
+      getId: () => (options.ssId || 'MOCK-SS-000'),
+      getName: () => (options.ssName || 'Mock Spreadsheet'),
+      getSheets: () => [produkSheet, penjualanSheet, userSheet],
       getSheetByName: (name) => {
         if (name === 'Produk') return options.noProdukSheet ? null : produkSheet;
         if (name === 'Penjualan') return options.noPenjualanSheet ? null : penjualanSheet;
@@ -185,10 +213,24 @@ function loadBackend(gas) {
   };
   sandbox.globalThis = sandbox;
 
-  vm.runInContext(code, vm.createContext(sandbox), { filename: 'Code.js' });
+  const ctx = vm.createContext(sandbox);
+  vm.runInContext(code, ctx, { filename: 'Code.js' });
+
+  // `const` di tingkat atas skrip GAS berada di lexical scope, bukan properti
+  // global — jadi sandbox.PETA_KOLOM_PENJUALAN bernilai undefined. Ambil lewat
+  // context supaya test memakai definisi skema yang sama dengan runtime.
+  const KONST = {};
+  [
+    'PETA_KOLOM_PENJUALAN', 'PETA_KOLOM_PRODUK', 'ALIAS_PRODUK',
+    'HEADER_PENJUALAN_PAYLOAD', 'HEADER_PRODUK_PAYLOAD',
+    'AKSI_TULIS', 'RETRY_MAKS', 'QUEUE_MAKS'
+  ].forEach(nama => {
+    try { KONST[nama] = vm.runInContext(nama, ctx); } catch (e) { /* tidak ada */ }
+  });
 
   return {
     sandbox: sandbox,
+    KONST: KONST,
     prosesCheckout: sandbox.prosesCheckout,
     tambahStokProduk: sandbox.tambahStokProduk,
     checkLogin: sandbox.checkLogin,
@@ -196,7 +238,26 @@ function loadBackend(gas) {
     getPenjualanData: sandbox.getPenjualanData,
     getInitialData: sandbox.getInitialData,
     doPost: sandbox.doPost,
-    doGet: sandbox.doGet
+    doGet: sandbox.doGet,
+    diagnostikPenjualan: sandbox.diagnostikPenjualan,
+    jalankanDiagnostik: sandbox.jalankanDiagnostik,
+    analisisKelengkapanPenjualan: sandbox.analisisKelengkapanPenjualan,
+    hitungVolumeMl: sandbox.hitungVolumeMl,
+    // Utilitas pemetaan header (Fix 1/2/3/4) — dibuka agar bisa diuji & diverifikasi.
+    getPenjualanReport: sandbox.getPenjualanReport,
+    buatPetaKolom: sandbox.buatPetaKolom,
+    susunBarisKolom: sandbox.susunBarisKolom,
+    petaKolomPenjualanSheet: sandbox.petaKolomPenjualanSheet,
+    petaKolomProdukSheet: sandbox.petaKolomProdukSheet,
+    headerPenjualanPayload: sandbox.headerPenjualanPayload,
+    headerProdukPayload: sandbox.headerProdukPayload,
+    ambilKolomAngka: sandbox.ambilKolomAngka,
+    selaraskanNamaProduk: sandbox.selaraskanNamaProduk,
+    isiVolumeMlProduk: sandbox.isiVolumeMlProduk,
+    ujiStagingPenjualan: sandbox.ujiStagingPenjualan,
+    _kunciProduk: sandbox._kunciProduk,
+    ALIAS_PRODUK: sandbox.ALIAS_PRODUK,
+    __sandbox: sandbox
   };
 }
 
