@@ -1773,9 +1773,13 @@ function petaKolomProdukSheet(sh) {
 
 // ─── Alias nama produk ───
 // Baris penjualan lama memakai nama yang berbeda dari master produk.
-// "Semangka Leci 350 ml" = "Semangci 350 ml" (produk SAMA, beda ejaan).
+// "Semangka Leci X ml" = "Semangci X ml" (produk SAMA, beda ejaan) untuk
+// varian 250, 350, dan 500 ml. HPP tetap diambil dari katalog master
+// Produk — tidak ada HPP yang dikarang.
 const ALIAS_PRODUK = {
-  'semangka leci 350 ml': 'semangci 350 ml'
+  'semangka leci 250 ml': 'semangci 250 ml',
+  'semangka leci 350 ml': 'semangci 350 ml',
+  'semangka leci 500 ml': 'semangci 500 ml'
 };
 
 /**

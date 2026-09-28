@@ -470,7 +470,12 @@ r.suite('Regresi Skema Penjualan — writer berbasis NAMA HEADER (Fix 3)', () =>
     );
     r.assertEq(res.status, 'success', 'tetap boleh jalan');
     const t = spreadsheet.__penjualan.__rows()[1];
-    r.assertEq(t.length, 11, 'baris mengikuti lebar header');
+    // Lebar baris mengikuti LEBAR BACA header, yaitu max(getMaxColumns(), 13).
+    // getRange(1,1,1,13) di Sheets asli mengembalikan 13 sel walau header cuma
+    // menamai 11, jadi baris ternilai 13 juga di produksi - yang penting
+    // semua sel di luar 11 kolom itu KOSONG, bukan berisi data karangan.
+    r.assertEq(t.length, 13, 'lebar baris = max(getMaxColumns(), 13)');
+    r.assertEq(t.slice(11).join(''), '', 'tidak ada isi di kolom yang tidak dinamai header');
     r.assertEq(t[2], 'Semangci 350 ml', 'Nama Produk di idx 2');
     r.assertEq(t[3], 2, 'Jumlah di idx 3 (bukan volume)');
     r.assertEq(t[4], 28000, 'Total Harga di idx 4');
@@ -1068,10 +1073,16 @@ r.suite('Diagnostik — rencanaBackfillHistori (dry-run, tanpa menulis)', () => 
     const obj = logs.map(s => JSON.parse(s));
     const hantu = obj.find(o => o.id === 'FR-HANTU1');
     r.assertEq(hantu.status, 'produk-tidak-ditemukan', 'tidak dihitung paksa');
-    r.assertEq(hantu.sesudah.modal, null, 'modal target kosong (tidak mengarang)');
+    // CATATAN PREMISE: baris ini writer-lama TERGESER (D=jumlah, E=total,
+    // F=volume, G=HPP) jadi HPP-nya TERCATAT di kolom G = 4000. Angka
+    // 4000 itu bukan dikarang dari master (produknya tidak ada di master),
+    // melainkan dibaca dari baris itu sendiri -> sesuai aturan kolom-E
+    // didahulukan. Yang dijamin: tidak pernah memakai HPP master.
+    r.assertEq(hantu.sesudah.hppSatuan, 4000, 'HPP dari kolom G baris itu sendiri, bukan dari master');
+    r.assertEq(hantu.produkMaster, null, 'tetap tidak ada di master');
     const kosong = obj.find(o => o.id === 'FR-KOSONG1');
     r.assertEq(kosong.status, 'hpp-tidak-tersedia', 'HPP master kosong -> dikecualikan');
-    r.assertEq(kosong.sesudah.hppSatuan, null, 'HPP target kosong (tidak mengarang)');
+    r.assertEq(kosong.sesudah.hppSatuan, 16000, 'HPP dari kolom G writer-lama (16000), bukan dikarang');
   });
 
   r.test('baris BARU ok tidak masuk rencana tulis', () => {
@@ -1081,6 +1092,131 @@ r.suite('Diagnostik — rencanaBackfillHistori (dry-run, tanpa menulis)', () => 
     const baru = obj.find(o => o.id === 'FR-BARU1');
     r.assertEq(baru.status, 'ok-tanpa-perubahan', 'baris baru sudah benar, tanpa tulis ulang');
     r.assertEq(baru.sesudah.modal, 16000, '2 x 8000 = 16000 sesuai sheet');
+  });
+});
+
+r.suite('Diagnostik — rencanaBackfillHistori (HPP kolom-E didahulukan, master HANYA estimasi)', () => {
+  const H13 = ['ID Transaksi', 'Tanggal', 'Nama Produk', 'Volume (ml)', 'HPP Satuan', 'Jumlah', 'Total Harga',
+    'Metode Pembayaran', 'Uang Dibayar', 'Uang Kembali', 'Modal', 'Biaya Operasional', 'Laba bersih'];
+
+  function setup() {
+    const gas = createGasMock();
+    gas.scriptRuntime.props.ENV = 'production';
+    // NOTE: HPP master 'Semangsu 350 ml' = 10000, sedangkan baris lamanya
+    // tercatat 9000 di kolom E. Master dianggap SUDAH BERUBAH.
+    const spreadsheet = gas.createSpreadsheetMock([
+      ['ID Produk', 'Nama Produk', 'Stok', 'Harga', 'foto_url', 'HPP', 'volume_ml'],
+      ['PD001', 'Semangsu 350 ml', 20, 15000, '', 10000, 350],
+      ['PD002', 'Semangci 350 ml', 20, 14000, '', 8000, 350],
+      ['PD003', 'Tanpa HPP 500 ml', 3, 20000, '', '', 500]
+    ], { penjualanRows: [
+      H13,
+      // (1) kelas E sehat: kolom E terisi 9000, master kini 10000. TIDAK boleh ditulis 10000.
+      ['FR-KOLOME', '27/09/2026 06:16', 'Semangsu 350 ml', 350, 9000, 1, 15000, 'CASH', 15000, 0, 9000, 0, 6000],
+      // (2) kolom E kosong, Modal ditulis 0 -> perlu estimasi dari master
+      ['FR-MODAJA', '01/09/2026 10:00', 'Semangsu 350 ml', '', '', 1, 15000, 'CASH', 15000, 0, 0, 0, 15000],
+      // (3) kelas A: L&M kosong TAPI D&E juga kosong -> BUKAN layout tergeser
+      ['FR-KELAS-A', '28/06/2026 08:00', 'Semangci 350 ml', '', '', 2, 28000, 'CASH', 28000, 0, '', '', ''],
+      // (4) kolom E berisi 0 -> bukan HPP valid, turun ke estimasi master
+      ['FR-E-NOL', '02/09/2026 09:00', 'Semangci 350 ml', '', 0, 1, 14000, 'CASH', 14000, 0, 0, 0, 14000],
+      // (5) produk tidak ada di master & kolom E kosong -> tanpa sumber HPP sama sekali
+      ['FR-HANTU', '03/09/2026 09:00', 'Misteri 300 ml', '', '', 1, 5000, 'CASH', 5000, 0, 0, 0, 5000],
+      // (5b) produk tidak ada di master, TAPI kolom E terisi -> tetap DIKECUALIKAN
+      //      dari rencana tulis, tapi sumber HPP-nya dilaporkan supaya bisa ditinjau.
+      ['FR-HANTU2', '05/09/2026 09:00', 'Misteri 300 ml', 300, 4000, 1, 5000, 'CASH', 5000, 0, 0, 0, 5000],
+      // (6) HPP master kosong DAN kolom E kosong -> tidak ada sumber HPP sama sekali
+      ['FR-HPPKOSONG', '04/09/2026 09:00', 'Tanpa HPP 500 ml', '', '', 1, 20000, 'CASH', 20000, 0, 0, 0, 20000]
+    ], penjualanMinRows: 1000 });
+    gas.scriptRuntime.activeSpreadsheet = spreadsheet;
+    const backend = loadBackendDiagnostik(gas);
+    return { gas, backend, spreadsheet };
+  }
+
+  function jalankan(backend) {
+    const obj = backend.rencanaBackfillHistori([2, 20]).map(s => JSON.parse(s));
+    return { ring: obj.find(o => o.RINGKASAN).RINGKASAN, semua: obj.filter(o => o.barisSheet) };
+  }
+
+  r.test('ATURAN INTI: kolom E yang terisi dipakai, master HPP TIDAK menimpanya', () => {
+    const { backend } = setup();
+    const { semua } = jalankan(backend);
+    const b = semua.find(o => o.id === 'FR-KOLOME');
+    r.assertEq(b.sumberHpp, 'kolom-E', 'sumber HPP = kolom E baris itu');
+    r.assertEq(b.sesudah.hppSatuan, 9000, 'HPP target 9000 (tercatat), bukan 10000 dari master');
+    r.assertEq(b.sesudah.modal, 9000, 'Modal = 1 x 9000 sesuai yang tercatat');
+    r.assertEq(b.sesudah.labaBersih, 6000, 'Laba = 15000 - 9000');
+    r.assertEq(b.estimasi, false, 'bukan estimasi');
+    r.assertEq(b.status, 'ok-tanpa-perubahan', 'baris sehat tidak proposes ditulis ulang');
+  });
+
+  r.test('kolom E kosong -> ESTIMASI dari master + penanda eksplisit', () => {
+    const { backend } = setup();
+    const { semua } = jalankan(backend);
+    const b = semua.find(o => o.id === 'FR-MODAJA');
+    r.assertEq(b.sumberHpp, 'ESTIMASI-master', 'ditandai estimasi');
+    r.assertEq(b.estimasi, true, 'flag estimasi true');
+    r.assertIncludes(b.peringatan, 'ESTIMASI', 'ada penanda ESTIMASI di output');
+    r.assertEq(b.sesudah.hppSatuan, 10000, 'HPP dari master');
+    r.assertEq(b.sesudah.modal, 10000, 'Modal = 1 x 10000');
+    r.assertEq(b.sesudah.labaBersih, 5000, 'Laba = 15000 - 10000');
+    r.assertEq(b.sebelum.modalSheet, 0, 'sebelum: Modal 0');
+  });
+
+  r.test('L&M kosong tapi D&E kosong = kelas A, BUKAN layout tergeser', () => {
+    const { backend } = setup();
+    const { semua } = jalankan(backend);
+    const b = semua.find(o => o.id === 'FR-KELAS-A');
+    r.assertEq(b.perluRemap, 'TIDAK', 'tidak dikira writer lama');
+    r.assertOk(b.status !== 'layout-tergeser', 'tidak proposes remap baris aligned');
+    r.assertEq(b.sumberHpp, 'ESTIMASI-master', 'estimasi karena kolom E kosong');
+    r.assertEq(b.sesudah.jumlah, 2, 'jumlah terbaca dari F (bukan D kosong)');
+    r.assertEq(b.sesudah.totalHarga, 28000, 'total terbaca dari G');
+    r.assertEq(b.sesudah.modal, 16000, 'Modal = 2 x 8000');
+    r.assertEq(b.sesudah.labaBersih, 12000, 'Laba = 28000 - 16000');
+    r.assertEq(b.sebelum.modalSheet, '(kosong)', 'sebelum: Modal kosong, bukan 0');
+  });
+
+  r.test('kolom E berisi 0 bukan HPP valid -> turun ke estimasi master', () => {
+    const { backend } = setup();
+    const { semua } = jalankan(backend);
+    const b = semua.find(o => o.id === 'FR-E-NOL');
+    r.assertEq(b.sumberHpp, 'ESTIMASI-master', 'HPP 0 tidak dipercaya');
+    r.assertEq(b.sesudah.hppSatuan, 8000, 'ambil dari master');
+  });
+
+  r.test('produk tak ditemukan & HPP master kosong tetap DIKECUALIKAN (tak ada estimasi)', () => {
+    const { backend } = setup();
+    const { semua } = jalankan(backend);
+    const hantu = semua.find(o => o.id === 'FR-HANTU');
+    r.assertEq(hantu.status, 'produk-tidak-ditemukan', 'dikecualikan');
+    r.assertEq(hantu.sumberHpp, null, 'tanpa sumber HPP');
+    r.assertEq(hantu.estimasi, false, 'tidak diklaim estimasi');
+    r.assertEq(hantu.sesudah.hppSatuan, null, 'tidak mengarang HPP');
+    const kosong = semua.find(o => o.id === 'FR-HPPKOSONG');
+    r.assertEq(kosong.status, 'hpp-tidak-tersedia', 'dikecualikan');
+    r.assertEq(kosong.sumberHpp, null, 'tanpa sumber HPP');
+    r.assertEq(kosong.sesudah.hppSatuan, null, 'tidak mengarang HPP');
+  });
+
+  r.test('produk tak ditemukan tapi kolom E terisi -> tetap dikecualikan, HPP-nya dilaporkan', () => {
+    const { backend } = setup();
+    const { semua, ring } = jalankan(backend);
+    const b = semua.find(o => o.id === 'FR-HANTU2');
+    r.assertEq(b.status, 'produk-tidak-ditemukan', 'tidak masuk rencana tulis');
+    r.assertEq(b.sumberHpp, 'kolom-E', 'sumber HPP tetap dilaporkan');
+    r.assertEq(b.hppKolomTersedia, 4000, 'angka HPP dari baris itu sendiri');
+    r.assertEq(ring.hpp_dari_kolom_E, 1, 'baris DIKECUALIKAN tidak dihitung sbg kolom-E di ringkasan');
+  });
+
+  r.test('ringkasan memisahkan HPP dari kolom-E vs estimasi master', () => {
+    const { backend } = setup();
+    const { ring } = jalankan(backend);
+    r.assertEq(ring.totalBaris, 7, '7 baris diproses');
+    r.assertEq(ring.hpp_dari_kolom_E, 1, '1 baris pakai HPP kolom E');
+    r.assertEq(ring.estimasi_dari_master, 3, '3 baris butuh estimasi master');
+    r.assertEq(ring.layout_tergeser, 0, 'tidak ada layout tergeser di fixture');
+    r.assertEq(ring.produk_tidak_ditemukan, 2, '2 produk tidak ditemukan');
+    r.assertEq(ring.hpp_tidak_tersedia, 1, '1 HPP master kosong');
   });
 });
 
@@ -1126,6 +1262,537 @@ r.suite('Diagnostik — pembungkus tanpa parameter (dropdown editor Apps Script)
     const logs = backend.cekRencanaBackfill();
     const obj = logs.map(s => JSON.parse(s));
     r.assertOk(obj.some(o => o.RINGKASAN && o.RINGKASAN.totalBaris === 1), 'RINGKASAN memuat 1 baris data');
+  });
+});
+
+// ════════════════════════════════════════════════════════════════
+// Alias produk: "Semangka Leci" -> "Semangci" untuk varian 250 & 500 ml.
+//
+// generalised: penamaan lama di sheet Penjualan adalah "Semangka Leci X ml",
+// sedangkan master produk memakai "Semangci X ml". Varian 350 ml sudah
+// punya alias; 250 & 500 mlblr. HPP dihitung dari katalog Dashboard
+// (master Produk) — tidak dikarang.
+// ════════════════════════════════════════════════════════════════
+r.suite('Alias produk - Semangka Leci 250/500 ml -> Semangci', () => {
+  const H13 = ['ID Transaksi', 'Tanggal', 'Nama Produk', 'Volume (ml)', 'HPP Satuan', 'Jumlah', 'Total Harga',
+    'Metode Pembayaran', 'Uang Dibayar', 'Uang Kembali', 'Modal', 'Biaya Operasional', 'Laba bersih'];
+  const PRODUK = [
+    ['ID Produk', 'Nama Produk', 'Stok', 'Harga', 'foto_url', 'HPP', 'volume_ml'],
+    ['SL0001', 'Semangci 250 ml', 50, 10000, '', 7500, 250],
+    ['SL0002', 'Semangci 350 ml', 50, 14000, '', 9000, 350],
+    ['SL0003', 'Semangci 500 ml', 50, 20000, '', 11000, 500]
+  ];
+
+  function setup() {
+    const gas = createGasMock();
+    gas.scriptRuntime.props.ENV = 'production';
+    const spreadsheet = gas.createSpreadsheetMock(PRODUK, { penjualanRows: [H13], penjualanMinRows: 50 });
+    gas.scriptRuntime.activeSpreadsheet = spreadsheet;
+    const backend = loadBackendDiagnostik(gas);
+    const selaraskan = backend.__sandbox.selaraskanNamaProduk;
+    return { backend, selaraskan, nama: PRODUK.slice(1).map(p => p[1]) };
+  }
+
+  r.test('"Semangka Leci 250 ml" resolve ke "Semangci 250 ml"', () => {
+    const { selaraskan, nama } = setup();
+    r.assertEq(selaraskan('Semangka Leci 250 ml', nama), 'Semangci 250 ml', 'varian 250 ml ikut ter-alias');
+  });
+
+  r.test('"Semangka Leci 500 ml" resolve ke "Semangci 500 ml"', () => {
+    const { selaraskan, nama } = setup();
+    r.assertEq(selaraskan('Semangka Leci 500 ml', nama), 'Semangci 500 ml', 'varian 500 ml ikut ter-alias');
+  });
+
+  r.test('alias lama "Semangka Leci 350 ml" tetap jalan (tanpa regresi)', () => {
+    const { selaraskan, nama } = setup();
+    r.assertEq(selaraskan('Semangka Leci 350 ml', nama), 'Semangci 350 ml', 'alias 350 ml tidak rusak');
+  });
+
+  r.test('pencocokan toleran huruf besar & sp berlebih tetap jalan', () => {
+    const { selaraskan, nama } = setup();
+    r.assertEq(selaraskan('  semangka   leci  500  ml ', nama), 'Semangci 500 ml', 'normalisasi kunci produk');
+  });
+
+  r.test('produk yang tidak ada padanannya tetap null (tidak dialiaskan asal)', () => {
+    const { selaraskan, nama } = setup();
+    r.assertEq(selaraskan('Menu Opsional', nama), null, 'Menu Opsional tetap tidak ditemukan');
+    r.assertEq(selaraskan('Semangka Potong', nama), null, 'Semangka Potong tetap tidak ditemukan');
+  });
+});
+
+// ════════════════════════════════════════════════════════════════
+// Diagnostik - rencanaBackfillKolomBaru()
+//
+// Rencana staging ke 5 kolom BARU (N/O/P/Q/R). Kolom A..M TIDAK disentuh
+// supaya nilai lama tetap bisa dibandingkan. Fungsi ini DRY-RUN: tidak
+// boleh memanggil setValues/setValue/clearContent sama sekali.
+//
+// Header baru dipilih yang TIDAK bisa ikut tercocok ke alias
+// PETA_KOLOM_PENJUALAN: "Revisi Modal"/"Revisi Laba" (bukan "Modal baru")
+// karena nama yang diawali kata "Modal"/"Laba" bisa tertangkap fallback
+// prefix-longgar buatPetaKolom. "Catatan Estimasi" (bukan "Catatan HPP")
+// demi alasan yang sama terhadap alias "HPP Satuan".
+// ════════════════════════════════════════════════════════════════
+r.suite('Diagnostik - rencanaBackfillKolomBaru (staging N..R, DRY-RUN)', () => {
+  const H13 = ['ID Transaksi', 'Tanggal', 'Nama Produk', 'Volume (ml)', 'HPP Satuan', 'Jumlah', 'Total Harga',
+    'Metode Pembayaran', 'Uang Dibayar', 'Uang Kembali', 'Modal', 'Biaya Operasional', 'Laba bersih'];
+
+  function setup() {
+    const gas = createGasMock();
+    gas.scriptRuntime.props.ENV = 'production';
+    // Wonapel 350 ml: master 10500, tapi baris 27/09 tercatat 10000 ->
+    // bukti HPP master sudah berubah. Estimasi 26/09 (sheet 8)-curiga.
+    // PENTING: produk ini TIDAK punya keputusan HPP pemilik, jadi suite ini
+    // menguji jalur "curiga" yang belum diputuskan manusia. Jalur yang sudah
+    // diputuskan (KOREKSI + catatan dihapus) diuji suite terpisah.
+    const spreadsheet = gas.createSpreadsheetMock([
+      ['ID Produk', 'Nama Produk', 'Stok', 'Harga', 'foto_url', 'HPP', 'volume_ml'],
+      ['SL0001', 'Semangci 250 ml', 50, 10000, '', 7500, 250],
+      ['SL0003', 'Semangci 500 ml', 50, 20000, '', 11000, 500],
+      ['WO0001', 'Wonapel 350 ml', 20, 15000, '', 10500, 350]
+    ], { penjualanRows: [
+      H13,
+      // (1) kolom E terisi & cocok -> TERCATAT
+      ['FR-TERCATAT', '28/09/2026 07:00', 'Semangci 250 ml', 250, 7500, 1, 10000, 'CASH', 10000, 0, 7500, 0, 2500],
+      // (2) kolom E kosong -> ESTIMASI dari master
+      ['FR-ESTIMASI', '01/09/2026 10:00', 'Semangci 250 ml', '', '', 2, 20000, 'CASH', 20000, 0, 0, 0, 20000],
+      // (3) produk tak ada di master -> DIKECUALIKAN, kolom angka KOSONG
+      ['FR-EKSKLUSI', '05/09/2026 09:00', 'Semangka Potong', '', '', 1, 10000, 'QRIS', 10000, 0, 0, 0, 10000],
+      // (4) Semangka Leci 250 ml -> harus ikut ter-alias jadi ESTIMASI
+      ['FR-LECI250', '12/07/2026 08:00', 'Semangka Leci 250 ml', '', '', 1, 10000, 'CASH', 10000, 0, '', '', ''],
+      // (5) Semangka Leci 500 ml -> harus ikut ter-alias jadi ESTIMASI
+      ['FR-LECI500', '12/07/2026 08:05', 'Semangka Leci 500 ml', '', '', 1, 20000, 'CASH', 20000, 0, '', '', ''],
+      // (6) Wonapel TERCATAT dengan HPP 10000 (master 10500) -> bukti master berubah
+      ['FR-WON-TER', '27/09/2026 07:00', 'Wonapel 350 ml', 350, 10000, 1, 15000, 'CASH', 15000, 0, 10000, 0, 5000],
+      // (7) Wonapel ESTIMASI SEBELUM tanggal di (6) -> HPP-nya diduga berbeda
+      ['FR-WON-EST', '26/09/2026 11:34', 'Wonapel 350 ml', '', '', 1, 15000, 'CASH', 15000, 0, 0, 0, 15000]
+    ], penjualanMinRows: 1000 });
+    gas.scriptRuntime.activeSpreadsheet = spreadsheet;
+    const backend = loadBackendDiagnostik(gas);
+    return { gas, backend, spreadsheet };
+  }
+
+  function jalankan(backend) {
+    const obj = backend.rencanaBackfillKolomBaru().map(s => JSON.parse(s));
+    return {
+      rencana: obj.find(o => o.RENCANA).RENCANA,
+      baris: obj.filter(o => o.barisSheet),
+      semua: obj
+    };
+  }
+
+  r.test('header kolom baru persis: Revisi Modal / Revisi Laba / Flag / Sumber HPP / Catatan Estimasi di N,O,P,Q,R', () => {
+    const { backend } = setup();
+    const { rencana } = jalankan(backend);
+    r.assertEq(JSON.stringify(rencana.headerKolomBaru),
+      JSON.stringify(['Revisi Modal', 'Revisi Laba', 'Flag', 'Sumber HPP', 'Catatan Estimasi']),
+      'urutan header N,O,P,Q,R');
+    r.assertEq(rencana.kolomBaru.N, 14, 'N = kolom ke-14');
+    r.assertEq(rencana.kolomBaru.O, 15, 'O = kolom ke-15');
+    r.assertEq(rencana.kolomBaru.P, 16, 'P = kolom ke-16');
+    r.assertEq(rencana.kolomBaru.Q, 17, 'Q = kolom ke-17');
+    r.assertEq(rencana.kolomBaru.R, 18, 'R = kolom ke-18');
+    r.assertEq(Object.keys(rencana.kolomBaru).join(','), 'N,O,P,Q,R', 'tepat 5 kolom staging');
+  });
+
+  r.test('header R = "Catatan Estimasi" TIDAK memuat kata "hpp" (aman dari alias hpp)', () => {
+    const { backend } = setup();
+    const { rencana } = jalankan(backend);
+    const headerR = rencana.headerKolomBaru[4];
+    r.assertEq(headerR, 'Catatan Estimasi', 'nama header R disepakati pemilik');
+    r.assertOk(!/hpp/i.test(headerR), 'header R tidak mengandung kata "hpp" sama sekali');
+  });
+
+  r.test('penambahan R TIDAK menggeser 13 kolom inti & TIDAK menimbulkan ambiguitas', () => {
+    const { backend } = setup();
+    const sb = backend.__sandbox;
+    const { rencana } = jalankan(backend);
+    const petas = backend.KONST.PETA_KOLOM_PENJUALAN;
+    const fields = Object.keys(petas);
+    // Pakai header ASLI dari rencana, bukan daftar hardcode: kalau
+    // implementasi tidak menambah kolom R, test ini harus gagal.
+    r.assertEq(rencana.headerKolomBaru.length, 5, 'rencana benar-benar punya 5 kolom staging');
+    const headerLengkap = H13.concat(rencana.headerKolomBaru);
+    r.assertEq(headerLengkap.length, 18, 'header sheet jadi 18 kolom (13 inti + 5 staging)');
+    const peta = sb.buatPetaKolom(headerLengkap, petas);
+
+    for (const f of fields) {
+      r.assertEq(peta.col[f], fields.indexOf(f), '"' + f + '" tetap di indeks ' + fields.indexOf(f));
+    }
+    r.assertEq(Object.keys(petas).length, 13, 'peta inti tetap 13 field');
+    r.assertEq(peta.ambigu.length, 0, '0 ambiguitas dengan 5 kolom tambahan');
+
+    // Tidak boleh ada field inti yang TerISI oleh kolom staging.
+    for (const f of fields) {
+      r.assertOk(peta.col[f] <= 12, '"' + f + '" tidak menunjuk kolom staging (N..R)');
+    }
+    // Header lama (tanpa kolom staging) harus tetap dipetakan sama ->
+    // berarti kolom baru benar-benar tidak ikut memengaruhi pembacaan.
+    const petaLama = sb.buatPetaKolom(H13.slice(), petas);
+    for (const f of fields) {
+      r.assertEq(petaLama.col[f], peta.col[f], 'posisi "' + f + '" identik dengan & tanpa kolom staging');
+    }
+  });
+
+  r.test('R terisi HANYA untuk baris yang dicurigai; baris lain kosong', () => {
+    const { backend } = setup();
+    const { baris } = jalankan(backend);
+    const curiga = baris.filter(o => o.nilai.curigaHppBerbeda);
+    r.assertEq(curiga.length, 1, 'tepat 1 baris dicurigai di fixture');
+    for (const o of curiga) {
+      r.assertOk(typeof o.nilai.catatanEstimasi === 'string' && o.nilai.catatanEstimasi.length > 0,
+        'baris dicurigai punya isi kolom R');
+    }
+    const bukanCuriga = baris.filter(o => !o.nilai.curigaHppBerbeda);
+    r.assertOk(bukanCuriga.length > 0, 'ada baris lain untuk diperiksa');
+    for (const o of bukanCuriga) {
+      r.assertEq(o.nilai.catatanEstimasi, '', 'R kosong untuk baris tidak dicurigai (' + o.id + ')');
+    }
+  });
+
+  r.test('kolom R tidak berisi kebocoran nilai HPP/angka untuk baris biasa', () => {
+    const { backend } = setup();
+    const { baris } = jalankan(backend);
+    // R hanya boleh teks penjelasan; tidak boleh angka hasil hitung.
+    for (const o of baris) {
+      const v = o.nilai.catatanEstimasi;
+      if (v === '') continue;
+      r.assertEq(typeof v, 'string', 'R bertipe teks');
+      r.assertOk(!/^-?\d+$/.test(v.trim()), 'R bukan angka mentah');
+    }
+  });
+
+  r.test('baris dengan HPP kolom-E -> flag TERCATAT, Q = "kolom E baris"', () => {
+    const { backend } = setup();
+    const { baris } = jalankan(backend);
+    const b = baris.find(o => o.id === 'FR-TERCATAT');
+    r.assertEq(b.flag, 'TERCATAT', 'HPP terbaca dari kolom E baris itu');
+    r.assertEq(b.nilai.revisiModal, 7500, 'Modal dari HPP tercatat');
+    r.assertEq(b.nilai.revisiLaba, 2500, 'Laba = 10000 - 7500');
+    r.assertEq(b.nilai.sumberHpp, 'kolom E baris', 'Q mencatat asal HPP');
+    r.assertEq(b.nilai.curigaHppBerbeda, false, 'tidak dicurigai');
+  });
+
+  r.test('baris kolom E kosong -> flag ESTIMASI, Q = "master produk"', () => {
+    const { backend } = setup();
+    const { baris } = jalankan(backend);
+    const b = baris.find(o => o.id === 'FR-ESTIMASI');
+    r.assertEq(b.flag, 'ESTIMASI', 'HPP dari master (katalog), bukan historis');
+    r.assertEq(b.nilai.revisiModal, 15000, '2 x 7500');
+    r.assertEq(b.nilai.revisiLaba, 5000, '20000 - 15000');
+    r.assertEq(b.nilai.sumberHpp, 'master produk', 'Q mencatat asal HPP');
+  });
+
+  r.test('produk tak ditemukan -> flag DIKECUALIKAN, Revisi Modal & Revisi Laba KOSONG', () => {
+    const { backend } = setup();
+    const { baris } = jalankan(backend);
+    const b = baris.find(o => o.id === 'FR-EKSKLUSI');
+    r.assertEq(b.flag, 'DIKECUALIKAN', 'tidak ada padanan master');
+    r.assertEq(b.nilai.revisiModal, '', 'Modal TIDAK dikarang');
+    r.assertEq(b.nilai.revisiLaba, '', 'Laba TIDAK dikarang');
+    r.assertEq(b.nilai.sumberHpp, 'tidak ada padanan master', 'Q menjelaskan alasan');
+  });
+
+  r.test('alias 250/500 membuat baris Semangka Leci jadi ESTIMASI (bukan dikecualikan)', () => {
+    const { backend } = setup();
+    const { baris } = jalankan(backend);
+    const a = baris.find(o => o.id === 'FR-LECI250');
+    r.assertEq(a.flag, 'ESTIMASI', 'Semangka Leci 250 ml ketemu master via alias');
+    r.assertEq(a.nilai.revisiModal, 7500, 'HPP katalog Semangci 250 ml = 7500');
+    const b = baris.find(o => o.id === 'FR-LECI500');
+    r.assertEq(b.flag, 'ESTIMASI', 'Semangka Leci 500 ml ketemu master via alias');
+    r.assertEq(b.nilai.revisiModal, 11000, 'HPP katalog Semangci 500 ml = 11000');
+  });
+
+  r.test('produk TANPA keputusan pemilik: estimasi sebelum tanggal bukti -> curigaHppBerbeda', () => {
+    const { backend } = setup();
+    const { baris } = jalankan(backend);
+    const est = baris.find(o => o.id === 'FR-WON-EST');
+    r.assertEq(est.nilai.curigaHppBerbeda, true, 'estimasi 26/09 dicurigai (master 10500, terekam 10000 di 27/09)');
+    r.assertOk(String(est.nilai.catatanEstimasi).includes('Wonapel'), 'catatan R menyebut produknya');
+    r.assertEq(est.nilai.revisiModal, 10500, 'HPP TETAP master 10500 - aturan estimasi tidak diubah');
+    const ter = baris.find(o => o.id === 'FR-WON-TER');
+    r.assertEq(ter.nilai.curigaHppBerbeda, false, 'baris TERCATAT tidak dicurigai');
+  });
+
+  r.test('produk lain TIDAK ikut ditandai (Semangci HPP master cocok dengan yang terekam)', () => {
+    const { backend } = setup();
+    const { baris } = jalankan(backend);
+    const est = baris.find(o => o.id === 'FR-ESTIMASI');
+    r.assertEq(est.nilai.curigaHppBerbeda, false, 'Semangci 250 ml master 7500 = terekam 7500');
+  });
+
+  r.test('ringkasan menghitung tiap flag', () => {
+    const { backend } = setup();
+    const { rencana, baris } = jalankan(backend);
+    const R = rencana.ringkasan;
+    r.assertEq(R.totalBaris, 7, '7 baris diproses');
+    r.assertEq(R.tercatat, 2, 'FR-TERCATAT + FR-WON-TER');
+    r.assertEq(R.koreksi, 0, 'tidak ada produk berkeputusan pemilik di fixture ini');
+    r.assertEq(R.estimasi, 4, 'FR-ESTIMASI + 2 alias + FR-WON-EST');
+    r.assertEq(R.dikecualikan, 1, 'FR-EKSKLUSI');
+    r.assertEq(baris.length, 7, 'setiap baris punya entri rencana');
+    r.assertEq(R.curigaHppBerbeda, 1, '1 baris dicurigai');
+    r.assertEq(R.denganCatatan, 1, 'tepat 1 baris punya isi kolom R');
+  });
+
+  r.test('DRY-RUN: tidak ada satu sel pun berubah di sheet Penjualan', () => {
+    const { backend, spreadsheet } = setup();
+    const sebelum = JSON.stringify(spreadsheet.__penjualan.__rows());
+    jalankan(backend);
+    const sesudah = JSON.stringify(spreadsheet.__penjualan.__rows());
+    r.assertEq(sesudah, sebelum, 'sheet Penjualan tak tersentuh');
+    r.assertEq(spreadsheet.__penjualan.getMaxColumns(), 13, 'kolom N..R belum ada di sheet');
+  });
+});
+
+// ════════════════════════════════════════════════════════════════
+// Diagnostik - KEPUTUSAN PEMILIK: HPP Semangsu 350 ml = 10.000
+//
+// Keputusan pemilik (28/09/2026): HPP Semangsu 350 ml final 10.000.
+// Damanya di backfill:
+//   (a) baris TERCATAT yang kolom E-nya BERBEDA dari 10.000 -> flag KOREKSI,
+//       Revisi Modal = 10.000 x jumlah, Revisi Laba dihitung ulang,
+//       Sumber HPP = "dikonfirmasi pemilik". K/M tetap utuh.
+//   (b) catatan "curiga" di kolom R untuk baris ESTIMASI produk ini DIHAPUS,
+//       karena master sudah dinyatakan benar oleh pemilik.
+// Suite di atas (tanpa keputusan pemilik) tetap menguji jalur (b)-yang-belum-
+// diputuskan supaya mekanisme curiga tidak ikut mati.
+// ════════════════════════════════════════════════════════════════
+r.suite('Diagnostik - KOREKSI: keputusan HPP pemilik Semangsu 350 ml = 10000', () => {
+  const H13 = ['ID Transaksi', 'Tanggal', 'Nama Produk', 'Volume (ml)', 'HPP Satuan', 'Jumlah', 'Total Harga',
+    'Metode Pembayaran', 'Uang Dibayar', 'Uang Kembali', 'Modal', 'Biaya Operasional', 'Laba bersih'];
+
+  function setup() {
+    const gas = createGasMock();
+    gas.scriptRuntime.props.ENV = 'production';
+    const spreadsheet = gas.createSpreadsheetMock([
+      ['ID Produk', 'Nama Produk', 'Stok', 'Harga', 'foto_url', 'HPP', 'volume_ml'],
+      ['SL0001', 'Semangci 250 ml', 50, 10000, '', 7500, 250],
+      ['MO0001', 'Semangsu 350 ml', 20, 15000, '', 10000, 350],
+      ['WO0001', 'Wonapel 350 ml', 20, 15000, '', 10500, 350]
+    ], { penjualanRows: [
+      H13,
+      // Semangsu: kolom E 9000 (dulu tertawa 9000) vs keputusan pemilik 10000
+      ['FR-SEM-K1', '27/09/2026 07:00', 'Semangsu 350 ml', 350, 9000, 1, 15000, 'CASH', 15000, 0, 9000, 0, 6000],
+      ['FR-SEM-K3', '27/09/2026 08:00', 'Semangsu 350 ml', 350, 9000, 3, 45000, 'CASH', 45000, 0, 27000, 0, 18000],
+      // dengan Biaya Operasional, supaya laba KOREKSI ikut memotongnya
+      ['FR-SEM-KOP', '30/09/2026 07:00', 'Semangsu 350 ml', 350, 9000, 1, 15000, 'CASH', 15000, 0, 9000, 500, 5500],
+      // kolom E SUDAH 10000 -> bukan KOREKSI, tetap TERCATAT
+      ['FR-SEM-T10', '29/09/2026 07:00', 'Semangsu 350 ml', 350, 10000, 2, 30000, 'CASH', 30000, 0, 20000, 0, 10000],
+      // Semangsu ESTIMASI (kolom E kosong) -> catatan curiga harus DIHAPUS
+      ['FR-SEM-E01', '26/09/2026 11:34', 'Semangsu 350 ml', '', '', 1, 15000, 'CASH', 15000, 0, 0, 0, 15000],
+      // Wonapel: TIDAK ada keputusan pemilik -> tidak boleh jadi KOREKSI
+      ['FR-WON-T10', '27/09/2026 07:00', 'Wonapel 350 ml', 350, 10000, 1, 15000, 'CASH', 15000, 0, 10000, 0, 5000],
+      // Wonapel ESTIMASI -> mekanisme curiga TETAP jalan (tanpa keputusan)
+      ['FR-WON-E01', '26/09/2026 11:34', 'Wonapel 350 ml', '', '', 1, 15000, 'CASH', 15000, 0, 0, 0, 15000],
+      ['FR-EKSKLUSI', '05/09/2026 09:00', 'Semangka Potong', '', '', 1, 10000, 'QRIS', 10000, 0, 0, 0, 10000]
+    ], penjualanMinRows: 1000 });
+    gas.scriptRuntime.activeSpreadsheet = spreadsheet;
+    const backend = loadBackendDiagnostik(gas);
+    return { gas, backend, spreadsheet };
+  }
+
+  function jalankan(backend) {
+    const obj = backend.rencanaBackfillKolomBaru().map(s => JSON.parse(s));
+    return {
+      rencana: obj.find(o => o.RENCANA).RENCANA,
+      baris: obj.filter(o => o.barisSheet),
+      semua: obj
+    };
+  }
+
+  // ── Titik 1: konstanta terdokumentasi, bukan angka tersebar ────────
+  r.test('keputusan HPP pemilik disimpan sebagai KONSTANTA terdokumentasi', () => {
+    const gas = createGasMock();
+    gas.scriptRuntime.props.ENV = 'production';
+    const backend = loadBackendDiagnostik(gas);
+    const K = backend.KONST.KEPUTUSAN_HPP_PEMILIK;
+    r.assertOk(K, 'konstanta KEPUTUSAN_HPP_PEMILIK ada (bukan angka hardcode di dalam logika)');
+    const s = K['Semangsu 350 ml'];
+    r.assertOk(s, 'produk Semangsu 350 ml punya entri keputusan');
+    r.assertEq(s.hpp, 10000, 'HPP final = 10000');
+    r.assertEq(s.sumber, 'pemilik', 'sumber keputusan dicatat: pemilik');
+    r.assertOk(String(s.tanggalKeputusan).length >= 8, 'tanggal keputusan dicatat (' + s.tanggalKeputusan + ')');
+    r.assertOk(String(s.alasan || '').length > 0, 'alasan/versi dicatat');
+  });
+
+  r.test('HPP yang dikonfirmasi owners = HPP master (tidak ada dua angka kebenaran)', () => {
+    const { backend } = setup();
+    const K = backend.KONST.KEPUTUSAN_HPP_PEMILIK;
+    const master = { 'Semangsu 350 ml': 10000, 'Wonapel 350 ml': 10500, 'Semangci 250 ml': 7500 };
+    for (const nama of Object.keys(K)) {
+      r.assertOk(master[nama] !== undefined, 'produk "' + nama + '" benar-benar ada di master');
+      r.assertEq(K[nama].hpp, master[nama], 'HPP dikonfirmasi "' + nama + '" sama dengan master');
+    }
+  });
+
+  // ── Titik 2: flag KOREKSI ────────────────────────────────────────
+  r.test('baris TERCATAT dengan kolom E != HPP dikonfirmasi -> flag KOREKSI', () => {
+    const { backend } = setup();
+    const { baris } = jalankan(backend);
+    for (const id of ['FR-SEM-K1', 'FR-SEM-K3', 'FR-SEM-KOP']) {
+      const b = baris.find(o => o.id === id);
+      r.assertEq(b.flag, 'KOREKSI', id + ' -> KOREKSI');
+      r.assertEq(b.nilai.sumberHpp, 'dikonfirmasi pemilik', id + ' Q = "dikonfirmasi pemilik"');
+      r.assertEq(b.koreksi.hppKolomE, 9000, id + ' mencatat kolom E lama = 9000');
+      r.assertEq(b.koreksi.hppDikonfirmasi, 10000, id + ' mencatat HPP dikonfirmasi = 10000');
+      r.assertEq(b.koreksi.sumberKeputusan, 'pemilik', id + ' mencatat sumber keputusan');
+    }
+  });
+
+  r.test('KOREKSI: Revisi Modal = HPP dikonfirmasi x jumlah', () => {
+    const { backend } = setup();
+    const { baris } = jalankan(backend);
+    const k1 = baris.find(o => o.id === 'FR-SEM-K1');
+    r.assertEq(k1.nilai.revisiModal, 10000, '1 x 10000');
+    const k3 = baris.find(o => o.id === 'FR-SEM-K3');
+    r.assertEq(k3.nilai.revisiModal, 30000, '3 x 10000');
+    const kop = baris.find(o => o.id === 'FR-SEM-KOP');
+    r.assertEq(kop.nilai.revisiModal, 10000, 'Biaya Operasional TIDAK ikut memotong Modal');
+  });
+
+  r.test('KOREKSI: Revisi Laba dihitung ulang dari HPP yang dikonfirmasi', () => {
+    const { backend } = setup();
+    const { baris } = jalankan(backend);
+    r.assertEq(baris.find(o => o.id === 'FR-SEM-K1').nilai.revisiLaba, 5000, '15000 - 10000 - 0');
+    r.assertEq(baris.find(o => o.id === 'FR-SEM-K3').nilai.revisiLaba, 15000, '45000 - 30000 - 0');
+    r.assertEq(baris.find(o => o.id === 'FR-SEM-KOP').nilai.revisiLaba, 4500, '15000 - 10000 - 500 (biaya op ikut dipotong)');
+  });
+
+  r.test('KOREKSI BEDA dari kolom lama: N != K (inilah inti flag baru)', () => {
+    const { backend } = setup();
+    const { baris } = jalankan(backend);
+    const k3 = baris.find(o => o.id === 'FR-SEM-K3');
+    r.assertEq(k3.sebelum.modal, 27000, 'K lama = 9000 x 3');
+    r.assertEq(k3.nilai.revisiModal, 30000, 'N baru = 10000 x 3');
+    r.assertEq(k3.sebelum.laba, 18000, 'M lama tercatat');
+    r.assertEq(k3.nilai.revisiLaba, 15000, 'O baru dihitung ulang');
+    r.assertOk(k3.nilai.revisiModal !== k3.sebelum.modal, 'N sengaja TIDAK sama dengan K');
+    r.assertOk(k3.nilai.revisiLaba !== k3.sebelum.laba, 'O sengaja TIDAK sama dengan M');
+  });
+
+  r.test('kolom E yang SUDAH sama dengan HPP dikonfirmasi -> tetap TERCATAT (bukan KOREKSI)', () => {
+    const { backend } = setup();
+    const { baris } = jalankan(backend);
+    const b = baris.find(o => o.id === 'FR-SEM-T10');
+    r.assertEq(b.flag, 'TERCATAT', 'tidak ada yang dikoreksi');
+    r.assertEq(b.nilai.sumberHpp, 'kolom E baris', 'Q tetap asal kolom E');
+    r.assertEq(b.nilai.revisiModal, 20000, '2 x 10000 dari kolom E');
+    r.assertEq(b.koreksi, null, 'tidak ada metadata koreksi');
+  });
+
+  r.test('produk TANPA keputusan pemilik tidak boleh jadi KOREKSI', () => {
+    const { backend } = setup();
+    const { baris } = jalankan(backend);
+    const b = baris.find(o => o.id === 'FR-WON-T10');
+    r.assertEq(b.flag, 'TERCATAT', 'kolom E 10000 dipakai apa adanya walau master 10500');
+    r.assertEq(b.nilai.sumberHpp, 'kolom E baris', 'bukan "dikonfirmasi pemilik"');
+    r.assertEq(b.nilai.revisiModal, 10000, 'N mengikuti kolom E');
+    r.assertEq(b.koreksi, null, 'tanpa metadata koreksi');
+  });
+
+  // ── Titik 3: catatan curiga produk terkonfirmasi dihapus ──────────
+  r.test('ESTIMASI produk terkonfirmasi: catatan curiga kolom R DIHAPUS', () => {
+    const { backend } = setup();
+    const { baris } = jalankan(backend);
+    const b = baris.find(o => o.id === 'FR-SEM-E01');
+    r.assertEq(b.flag, 'ESTIMASI', 'tetap ESTIMASI');
+    r.assertEq(b.nilai.curigaHppBerbeda, false, 'tidak dicurigai - 10000 sudah dikonfirmasi benar');
+    r.assertEq(b.nilai.catatanEstimasi, '', 'kolom R KOSONG');
+    r.assertEq(b.nilai.revisiModal, 10000, 'HPP master tidak berubah');
+  });
+
+  r.test('baris KOREKSI sendiri tidak punya catatan di kolom R', () => {
+    const { backend } = setup();
+    const { baris } = jalankan(backend);
+    for (const o of baris.filter(x => x.flag === 'KOREKSI')) {
+      r.assertEq(o.nilai.curigaHppBerbeda, false, o.id + ' tidak dicurigai');
+      r.assertEq(o.nilai.catatanEstimasi, '', o.id + ' kolom R kosong');
+    }
+  });
+
+  r.test('tanpa regresi: produk BELUM diputuskan tetap dapat catatan curiga', () => {
+    const { backend } = setup();
+    const { baris } = jalankan(backend);
+    const b = baris.find(o => o.id === 'FR-WON-E01');
+    r.assertEq(b.flag, 'ESTIMASI', 'tetap ESTIMASI');
+    r.assertEq(b.nilai.curigaHppBerbeda, true, 'mekanisme curiga masih hidup');
+    r.assertOk(String(b.nilai.catatanEstimasi).length > 0, 'kolom R terisi');
+    r.assertEq(b.nilai.revisiModal, 10500, 'HPP master, aturan estimasi tidak diubah');
+  });
+
+  // ── Titip 4: nilai untuk verifikasi mandiri (dipakai writer) ──────
+  r.test('setiap baris non-DIKECUALIKAN punya angka sumber hitungannya', () => {
+    const { backend } = setup();
+    const { baris } = jalankan(backend);
+    const target = baris.filter(o => o.flag !== 'DIKECUALIKAN');
+    r.assertOk(target.length > 0, 'ada baris untuk diperiksa');
+    for (const o of target) {
+      const n = o.nilai;
+      r.assertEq(typeof n.hppDipakai, 'number', o.id + ' hppDipakai adalah angka');
+      r.assertEq(typeof n.jumlah, 'number', o.id + ' jumlah adalah angka');
+      r.assertEq(typeof n.totalHarga, 'number', o.id + ' totalHarga adalah angka');
+      r.assertEq(typeof n.biayaOperasional, 'number', o.id + ' biayaOperasional adalah angka');
+      // Writer harus bisa MENGHITUNG ULANG, bukan sekadar percaya rencana.
+      r.assertEq(n.revisiModal, n.jumlah * n.hppDipakai, o.id + ' N = jumlah x HPP');
+      r.assertEq(n.revisiLaba, n.totalHarga - n.revisiModal - n.biayaOperasional, o.id + ' O = total - N - biaya');
+    }
+  });
+
+  r.test('baris DIKECUALIKAN tetap kosong di kolom angka', () => {
+    const { backend } = setup();
+    const { baris } = jalankan(backend);
+    const b = baris.find(o => o.id === 'FR-EKSKLUSI');
+    r.assertEq(b.flag, 'DIKECUALIKAN', 'tetap terkunci');
+    r.assertEq(b.nilai.revisiModal, '', 'tidak dikarang');
+    r.assertEq(b.nilai.revisiLaba, '', 'tidak dikarang');
+    r.assertEq(b.koreksi, null, 'tanpa metadata koreksi');
+  });
+
+  r.test('ringkasan menghitung keempat flag', () => {
+    const { backend } = setup();
+    const { rencana } = jalankan(backend);
+    const R = rencana.ringkasan;
+    r.assertEq(R.totalBaris, 8, '8 baris diproses');
+    r.assertEq(R.tercatat, 2, 'FR-SEM-T10 + FR-WON-T10');
+    r.assertEq(R.koreksi, 3, 'FR-SEM-K1 + FR-SEM-K3 + FR-SEM-KOP');
+    r.assertEq(R.estimasi, 2, 'FR-SEM-E01 + FR-WON-E01');
+    r.assertEq(R.dikecualikan, 1, 'FR-EKSKLUSI');
+    r.assertEq(R.curigaHppBerbeda, 1, 'hanya Wonapel yang dicurigai');
+    r.assertEq(R.denganCatatan, 1, 'hanya 1 baris punya isi kolom R');
+  });
+
+  r.test('rekonsiliasi per flag tersedia untuk audit', () => {
+    const { backend } = setup();
+    const { rencana, baris } = jalankan(backend);
+    const rf = rencana.rekonsiliasi.perFlag;
+    for (const f of ['TERCATAT', 'KOREKSI', 'ESTIMASI', 'DIKECUALIKAN']) {
+      r.assertOk(rf[f], 'perFlag ada untuk ' + f);
+    }
+    // Sigma KOREKSI harus sama dengan jumlah x 10000 dari fixture.
+    r.assertEq(rf.KOREKSI.n, 3, '3 baris KOREKSI');
+    r.assertEq(rf.KOREKSI.sigmaModalBaru, 10000 + 30000 + 10000, 'sigma Revisi Modal KOREKSI');
+    r.assertEq(rf.KOREKSI.sigmaLabaBaru, 5000 + 15000 + 4500, 'sigma Revisi Laba KOREKSI');
+    r.assertEq(rf.KOREKSI.sigmaModalSheet, 9000 + 27000 + 9000, 'sigma K lama KOREKSI');
+    // Sigma total harus sama dengan penjumlahan sigma per flag (tak ada baris hilang).
+    const total = rencana.rekonsiliasi.sigmaModalBaru;
+    r.assertEq(total,
+      rf.TERCATAT.sigmaModalBaru + rf.KOREKSI.sigmaModalBaru + rf.ESTIMASI.sigmaModalBaru + rf.DIKECUALIKAN.sigmaModalBaru,
+      'sigma total = jumlah sigma per flag');
+    r.assertEq(rencana.rekonsiliasi.totalBaris, baris.length, 'totalBaris rekonsiliasi = jumlah entri rencana');
+  });
+
+  r.test('DRY-RUN: K/M dan seluruh sheet Penjualan tak tersentuh', () => {
+    const { backend, spreadsheet } = setup();
+    const sebelum = JSON.stringify(spreadsheet.__penjualan.__rows());
+    jalankan(backend);
+    const sesudah = JSON.stringify(spreadsheet.__penjualan.__rows());
+    r.assertEq(sesudah, sebelum, 'sheet Penjualan tak tersentuh');
+    const rows = spreadsheet.__penjualan.__rows();
+    r.assertEq(rows[1][10], 9000, 'K baris 1 tetap 9000');
+    r.assertEq(rows[1][12], 6000, 'M baris 1 tetap 6000');
+    r.assertEq(rows[4][10], 20000, 'K baris TERCATAT Semangsu tetap 20000');
   });
 });
 

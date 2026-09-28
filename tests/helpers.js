@@ -20,7 +20,12 @@ function createGasMock() {
       name: name,
       rows: rows.map(r => r.slice()),
       failGetValues: !!(options && options.failGetValues),
-      getValuesReturnsNonArray: !!(options && options.getValuesReturnsNonArray)
+      getValuesReturnsNonArray: !!(options && options.getValuesReturnsNonArray),
+      // Lebar grid awal. Sheet live 29 kolom; isi barisnya boleh jauh lebih
+      // sempit. Test yang butuh grid lebih lebar lewat ops.gridCols.
+      gridCols: (options && options.gridCols)
+        ? options.gridCols
+        : rows.reduce((m, r) => Math.max(m, r.length), 1)
     };
 
     function rangeObj(row, col, numRows, numCols) {
@@ -35,7 +40,15 @@ function createGasMock() {
           const out = [];
           for (let i = 0; i < numRows; i++) {
             const r = state.rows[row - 1 + i];
-            out.push(r ? r.slice() : []);
+            // Sheets sungguhan hanya mengembalikan kolom yang diminta, dan
+            // SELALU tepat numRows x numCols. Mengembalikan seluruh baris
+            // membuat kode yang mengindeks [0] sebagai "kolom N" terlihat
+            // benar di mock dan salah di produksi. Mengembalikan [] untuk
+            // sel yang belum pernah diisi membuat kode "¿sel kosong?"
+            // salah membaca keadaan sheet.
+            const win = r ? r.slice(col - 1, col - 1 + numCols) : [];
+            while (win.length < numCols) win.push('');
+            out.push(win);
           }
           return out;
         },
@@ -59,7 +72,13 @@ function createGasMock() {
           state.rows[row - 1][col - 1] = v;
           return this;
         },
-        getValue: () => (state.rows[row - 1] ? state.rows[row - 1][col - 1] : '')
+        // Sheets sungguhan mengembalikan '' untuk sel yang belum pernah diisi,
+        // bukan undefined. Selisih ini membuat kode yang menguji "sel kosong"
+        // lolos di mock dan gagal diam-diam di produksi.
+        getValue: () => {
+          const v = state.rows[row - 1] ? state.rows[row - 1][col - 1] : '';
+          return (v === null || v === undefined) ? '' : v;
+        }
       };
     }
 
@@ -77,7 +96,31 @@ function createGasMock() {
         }
         return 0;
       },
-      getMaxColumns: () => Math.max(1, ...state.rows.map(r => r.length)),
+      // Sheets sungguhan: getMaxColumns = LEBAR GRID, sudah ada sejak sheet
+      // dibuat, dan tidak berubah hanya karena menulis DI DALAMNYA. Sheet
+      // live: getMaxColumns 29 sementara isinya baru 13 kolom. Itu sebabnya
+      // lebar grid tidak bisa dipakai sebagai verifikasi lebar sheet.
+      // Mock lama memakai max panjang baris, jadi ikut tumbuh saat menulis -
+      // perilaku yang tidak mungkin terjadi di produksi.
+      getMaxColumns: () => {
+        let maks = state.gridCols;
+        for (const r of state.rows) if (r && r.length > maks) maks = r.length;
+        return Math.max(1, maks);
+      },
+      // Sheets sungguhan: getLastColumn = kolom TERAKHIR yang BERISI, BUKAN
+      // lebar grid. getMaxColumns() selalu >= lebar grid (live: 29) sehingga
+      // tidak bisa dipakai memverifikasi "tidak menulis di luar N..R".
+      // Dipakai V-3: nilainya direkam sebelum blok lalu dibandingkan sesudah.
+      getLastColumn: () => {
+        let maks = 0;
+        for (const r of state.rows) {
+          if (!r) continue;
+          for (let c = r.length - 1; c > maks - 1; c--) {
+            if (String(r[c] == null ? '' : r[c]).trim() !== '') { maks = c + 1; break; }
+          }
+        }
+        return maks;
+      },
       getMaxRows: () => Math.max(state.rows.length, options.minRows || 0),
       appendRow: (rowVals) => { state.rows.push(rowVals.slice()); return sheet; },
       __rows: () => state.rows.map(r => r.slice())
@@ -100,7 +143,7 @@ function createGasMock() {
     const penjualanSheet = makeSheet('Penjualan', options.penjualanRows || [
       ['ID Transaksi', 'Tanggal', 'Nama Produk', 'Volume (ml)', 'HPP Satuan', 'Jumlah', 'Total Harga',
         'Metode Pembayaran', 'Uang Dibayar', 'Uang Kembali', 'Modal', 'Biaya Operasional', 'Laba bersih']
-    ], { minRows: options.penjualanMinRows || options.minRows });
+    ], { minRows: options.penjualanMinRows || options.minRows, gridCols: options.penjualanGridCols });
     const userSheet = makeSheet('User', options.userRows || [
       ['username', 'password', 'role'],
       ['admin', 'password', 'SUPER_ADMIN'],
@@ -296,7 +339,11 @@ function loadBackendDiagnostik(gas) {
   [
     'PETA_KOLOM_PENJUALAN', 'PETA_KOLOM_PRODUK', 'ALIAS_PRODUK',
     'HEADER_PENJUALAN_PAYLOAD', 'HEADER_PRODUK_PAYLOAD',
-    'AKSI_TULIS', 'RETRY_MAKS', 'QUEUE_MAKS'
+    'AKSI_TULIS', 'RETRY_MAKS', 'QUEUE_MAKS',
+    // Staging kolom baru + keputusan HPP pemilik (Diagnostik.js).
+    'KEPUTUSAN_HPP_PEMILIK', 'KOLOM_STAGING', 'HEADER_STAGING',
+    'FLAG_TERCATAT', 'FLAG_KOREKSI', 'FLAG_ESTIMASI', 'FLAG_DIKECUALIKAN',
+    'SUMBER_TERCATAT', 'SUMBER_KOREKSI', 'SUMBER_ESTIMASI', 'SUMBER_TIDAK_ADA'
   ].forEach(nama => {
     try { KONST[nama] = vm.runInContext(nama, ctx); } catch (e) { /* tidak ada */ }
   });
@@ -306,11 +353,73 @@ function loadBackendDiagnostik(gas) {
     KONST: KONST,
     diagnostikModalTerakhir: sandbox.diagnostikModalTerakhir,
     rencanaBackfillHistori: sandbox.rencanaBackfillHistori,
+    rencanaBackfillKolomBaru: sandbox.rencanaBackfillKolomBaru,
     cekModalTransaksiBaru: sandbox.cekModalTransaksiBaru,
     cekModalTransaksiLama: sandbox.cekModalTransaksiLama,
     cekRencanaBackfill: sandbox.cekRencanaBackfill,
     parseAngkaToleran: sandbox.parseAngkaToleran,
     _perluRemap: sandbox._perluRemap,
+    _hitungRencanaHistori: sandbox._hitungRencanaHistori,
+    _bulat: sandbox._bulat,
+    __sandbox: sandbox
+  };
+}
+
+/**
+ * Memuat Code.js + Diagnostik.js + BackfillKolomBaru.js (jika ada).
+ *
+ * BackfillKolomBaru.js memuat kode TULIS, jadi sengaja punya loader sendiri:
+ * suite regresi murni (loadBackend) tidak pernah memuatnya.
+ */
+function loadBackendBackfill(gas) {
+  const fs = require('fs');
+  const path = require('path');
+  const vm = require('vm');
+  const base = path.join(__dirname, '..');
+  const kode = ['Code.js', 'Diagnostik.js', 'BackfillKolomBaru.js'].map(n => {
+    const p = path.join(base, n);
+    if (!fs.existsSync(p)) throw new Error('File wajib tidak ada: ' + n);
+    return fs.readFileSync(p, 'utf8');
+  }).join('\n');
+
+  const sandbox = {
+    Logger: gas.Logger,
+    PropertiesService: gas.PropertiesService,
+    SpreadsheetApp: gas.SpreadsheetApp,
+    DriveApp: gas.DriveApp,
+    Utilities: gas.Utilities,
+    ScriptApp: gas.ScriptApp,
+    LockService: gas.LockService,
+    ContentService: gas.ContentService,
+    HtmlService: gas.HtmlService,
+    Session: { getActiveUser: () => ({ getEmail: () => '' }) },
+    console: console
+  };
+  sandbox.globalThis = sandbox;
+
+  const ctx = vm.createContext(sandbox);
+  vm.runInContext(kode, ctx, { filename: 'backfill.js' });
+
+  return {
+    sandbox: sandbox,
+    // Semua entry point penulis harus bisa dipanggil TANPA parameter dari
+    // dropdown "function" editor Apps Script.
+    cekBlokTersedia: sandbox.cekBlokTersedia,
+    tulisBlok: sandbox.tulisBlok,
+    tulisBlok1: sandbox.tulisBlok1,
+    tulisBlok2: sandbox.tulisBlok2,
+    tulisBlok3: sandbox.tulisBlok3,
+    tulisBlok4: sandbox.tulisBlok4,
+    tulisBlok5: sandbox.tulisBlok5,
+    tulisBlok6: sandbox.tulisBlok6,
+    rollbackBlok: sandbox.rollbackBlok,
+    rollbackBlok1: sandbox.rollbackBlok1,
+    rollbackBlok2: sandbox.rollbackBlok2,
+    rollbackBlok3: sandbox.rollbackBlok3,
+    rollbackBlok4: sandbox.rollbackBlok4,
+    rollbackBlok5: sandbox.rollbackBlok5,
+    rollbackBlok6: sandbox.rollbackBlok6,
+    denganKunciTulisWajib: sandbox.denganKunciTulisWajib,
     __sandbox: sandbox
   };
 }
@@ -622,4 +731,4 @@ function createRunner() {
   return { suite, test, assertEq, assertOk, assertArray, assertIncludes, assertNotIncludes, assertFalse, assertDoesNotThrow, run };
 }
 
-module.exports = { createGasMock, loadBackend, loadBackendDiagnostik, createDomStub, loadFrontend, createRunner };
+module.exports = { createGasMock, loadBackend, loadBackendDiagnostik, loadBackendBackfill, createDomStub, loadFrontend, createRunner };
