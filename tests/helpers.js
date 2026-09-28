@@ -306,6 +306,9 @@ function loadBackendDiagnostik(gas) {
     KONST: KONST,
     diagnostikModalTerakhir: sandbox.diagnostikModalTerakhir,
     rencanaBackfillHistori: sandbox.rencanaBackfillHistori,
+    cekModalTransaksiBaru: sandbox.cekModalTransaksiBaru,
+    cekModalTransaksiLama: sandbox.cekModalTransaksiLama,
+    cekRencanaBackfill: sandbox.cekRencanaBackfill,
     parseAngkaToleran: sandbox.parseAngkaToleran,
     _perluRemap: sandbox._perluRemap,
     __sandbox: sandbox

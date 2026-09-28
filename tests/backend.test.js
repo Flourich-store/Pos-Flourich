@@ -884,4 +884,49 @@ r.suite('Diagnostik — rencanaBackfillHistori (dry-run, tanpa menulis)', () => 
   });
 });
 
+r.suite('Diagnostik — pembungkus tanpa parameter (dropdown editor Apps Script)', () => {
+  const H13 = ['ID Transaksi', 'Tanggal', 'Nama Produk', 'Volume (ml)', 'HPP Satuan', 'Jumlah', 'Total Harga',
+    'Metode Pembayaran', 'Uang Dibayar', 'Uang Kembali', 'Modal', 'Biaya Operasional', 'Laba bersih'];
+  const HPP = ['ID Produk', 'Nama Produk', 'Stok', 'Harga', 'foto_url', 'HPP', 'volume_ml'];
+
+  function setup() {
+    const gas = createGasMock();
+    gas.scriptRuntime.props.ENV = 'production';
+    const spreadsheet = gas.createSpreadsheetMock([
+      [HPP[0], HPP[1], HPP[2], HPP[3], HPP[4], HPP[5], HPP[6]],
+      ['PD001', 'Wonapel 250 ml', 50, 15000, '', 9500, 250]
+    ], { penjualanRows: [
+      H13,
+      ['FR-1790566607168', '20/09/2026 10:00', 'Wonapel 250 ml', 250, 9500, 1, 15000, 'QRIS', 15000, 0, 9500, 0, 5500]
+    ], penjualanMinRows: 1000 });
+    gas.scriptRuntime.activeSpreadsheet = spreadsheet;
+    return { gas, backend: loadBackendDiagnostik(gas), spreadsheet };
+  }
+
+  r.test('cekModalTransaksiBaru() -> baris FR-1790566607168 terdeteksi, tanpa perlu argumen', () => {
+    const { backend } = setup();
+    const logs = backend.cekModalTransaksiBaru();
+    r.assertArray(logs, 'mengembalikan array log');
+    const obj = logs.slice(0, -1).map(s => JSON.parse(s));
+    const b = obj.find(o => o.id === 'FR-1790566607168');
+    r.assertOk(b, 'baris baru ditemukan');
+    r.assertEq(b.status, 'modal-sesuai', '1 x 9500 cocok dengan sheet');
+    r.assertEq(b.perluRemap, 'TIDAK (kolom L&M terisi = kode baru)', 'dikenali sebagai baris kode baru');
+  });
+
+  r.test('cekModalTransaksiLama() -> tidak crash walau ID tidak ada di mock (status tidak-ditemukan)', () => {
+    const { backend } = setup();
+    const logs = backend.cekModalTransaksiLama();
+    const obj = logs.map(s => JSON.parse(s));
+    r.assertOk(obj.some(o => o.status === 'tidak-ditemukan'), 'dilaporkan tidak-ditemukan, bukan error');
+  });
+
+  r.test('cekRencanaBackfill() -> berisi RINGKASAN, tanpa perlu argumen', () => {
+    const { backend } = setup();
+    const logs = backend.cekRencanaBackfill();
+    const obj = logs.map(s => JSON.parse(s));
+    r.assertOk(obj.some(o => o.RINGKASAN && o.RINGKASAN.totalBaris === 1), 'RINGKASAN memuat 1 baris data');
+  });
+});
+
 r.run('Backend Code.js').then(ok => { process.exit(ok ? 0 : 1); });

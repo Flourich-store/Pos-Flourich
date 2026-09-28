@@ -446,3 +446,24 @@ function rencanaBackfillHistori(arg) {
   }
   return log;
 }
+
+// ════════════════════════════════════════════════════════════════
+// PEMBUNGKUS TANPA PARAMETER — untuk dropdown "function" di editor
+// Apps Script (fungsi berparameter tidak bisa dipilih di sana).
+// Ketiganya READ-ONLY; hanya meneruskan ke fungsi utama.
+// ════════════════════════════════════════════════════════════════
+
+/** Periksa transaksi BARU FR-1790566607168 (Modal tampil Rp0). */
+function cekModalTransaksiBaru() {
+  return diagnostikModalTerakhir('FR-1790566607168');
+}
+
+/** Periksa transaksi LAMA FR-1790513368295 (cetak kolom A-M mentah). */
+function cekModalTransaksiLama() {
+  return diagnostikModalTerakhir('FR-1790513368295');
+}
+
+/** Rencana backfill historis (dry-run): ringkasan + baris non-ok. */
+function cekRencanaBackfill() {
+  return rencanaBackfillHistori();
+}
