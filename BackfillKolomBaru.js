@@ -424,7 +424,7 @@ function cekBlokTersedia() {
   };
   Logger.log('=== SIDIK JARI: ' + sidikJari + ' | ' + ss.getName() +
     ' | ' + bentuk.lastRow + ' baris, ' + bentuk.jumlahBarisData + ' baris data, grid ' + bentuk.maxColumns +
-    ' kolom | cocokkan dengan log tulisBlok1() ===');
+    ' kolom | cocokkan dengan log tulisBlokN() ===');
   return _bfJson(hasil);
 }
 
