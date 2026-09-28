@@ -350,10 +350,14 @@ function getProdukData() {
     const row = data[i];
     const id = String(ambilKolom(row, peta, 'id', '') || '').trim();
     const nama = String(ambilKolom(row, peta, 'nama', '') || '').trim();
-    const stok = ambilKolomAngka(row, peta, 'stok', 0);
-    const harga = ambilKolomAngka(row, peta, 'harga', 0);
+    // P2: angka di sheet boleh tersimpan sebagai TEKS format id-ID
+    // ("10.500", "Rp 12.000"). Number() akan memotong jadi 10.5, jadi
+    // stok/harga/HPP harus dibaca dengan parser toleran. Payload ini
+    // di-carry frontend ke keranjang lalu ikut ke prosesCheckout.
+    const stok = ambilKolomAngkaToleran(row, peta, 'stok', 0);
+    const harga = ambilKolomAngkaToleran(row, peta, 'harga', 0);
     let fotoUrl = String(ambilKolom(row, peta, 'foto_url', '') || '').trim();
-    const hpp = ambilKolomAngka(row, peta, 'hpp', 0);
+    const hpp = ambilKolomAngkaToleran(row, peta, 'hpp', 0);
 
     let volumeMl = ambilKolom(row, peta, 'volume_ml', '');
     if (volumeMl === '' || volumeMl == null) volumeMl = hitungVolumeMl(nama);
@@ -494,15 +498,15 @@ function getPenjualanData() {
       tanggal,                                                                    // Tanggal
       ambilKolomTeks(row, peta, 'namaProduk', ''),                                // Nama Produk
       formatVolumeMl(ambilKolom(row, peta, 'volumeMl', '')),                      // Volume (ml)
-      ambilKolomAngka(row, peta, 'hppSatuan', 0),                                 // HPP Satuan
+      ambilKolomAngkaAtauKosong(row, peta, 'hppSatuan'),                         // HPP Satuan (kosong = HPP tak terbaca)
       ambilKolomAngka(row, peta, 'jumlah', 0),                                    // Jumlah
       ambilKolomAngka(row, peta, 'totalHarga', 0),                                // Total Harga
       ambilKolomTeks(row, peta, 'metode', ''),                                    // Metode Pembayaran
       ambilKolomAngka(row, peta, 'uangDibayar', 0),                               // Uang Dibayar
       ambilKolomAngka(row, peta, 'uangKembali', 0),                               // Uang Kembali
-      ambilKolomAngka(row, peta, 'modal', 0),                                     // Modal
-      ambilKolomAngka(row, peta, 'biayaOperasional', 0),                          // Biaya Operasional
-      ambilKolomAngka(row, peta, 'labaBersih', 0)                                 // Laba Bersih
+      ambilKolomAngkaAtauKosong(row, peta, 'modal'),                              // Modal (kosong = tidak dihitung)
+      ambilKolomAngkaAtauKosong(row, peta, 'biayaOperasional'),                   // Biaya Operasional
+      ambilKolomAngkaAtauKosong(row, peta, 'labaBersih')                          // Laba Bersih
     ]);
 
   }
@@ -568,8 +572,12 @@ function getInitialData(limitPenjualan) {
         const row = dataProduk[i];
         const id = String(ambilKolom(row, petaProduk, 'id', '') || '').trim();
         const nama = String(ambilKolom(row, petaProduk, 'nama', '') || '').trim();
-        const stok = ambilKolomAngka(row, petaProduk, 'stok', 0);
-        const harga = ambilKolomAngka(row, petaProduk, 'harga', 0);
+        // Sama seperti getProdukData: angka di sheet boleh TEKS format id-ID
+        // ("14.000"), jadi harus dibaca parser toleran. Jalur ini yang dipakai
+        // kasir saat login (getInitialData), jadi WAJIB konsisten dengan
+        // getProdukData atau kasir menerima angka terpotong.
+        const stok = ambilKolomAngkaToleran(row, petaProduk, 'stok', 0);
+        const harga = ambilKolomAngkaToleran(row, petaProduk, 'harga', 0);
         let fotoUrl = String(ambilKolom(row, petaProduk, 'foto_url', '') || '').trim();
 
         // Cocokkan foto dari Google Drive hanya bila ada foto yang belum terisi
@@ -589,7 +597,7 @@ function getInitialData(limitPenjualan) {
         // HPP: kolom HPP produk. TIDAK ada fallback ke kolom lain — kolom
         // foto_url pernah berisi angka Modal batch sisa dan bocor ke
         // Laba Bersih (bug Modal 15.000 vs 50.000 untuk produk yang sama).
-        const hppProduk = ambilKolomAngka(row, petaProduk, 'hpp', 0);
+        const hppProduk = ambilKolomAngkaToleran(row, petaProduk, 'hpp', 0);
 
         // volume_ml: kolom volume_ml (G). Kosong -> turunan dari nama supaya
         // produk baru tetap punya volume, tapi kolom aslinya yang diutamakan.
@@ -648,15 +656,15 @@ function getInitialData(limitPenjualan) {
           formatTanggalRow(ambilKolom(row, peta, 'tanggal', ''), timezone),
           ambilKolomTeks(row, peta, 'namaProduk', ''),
           formatVolumeMl(ambilKolom(row, peta, 'volumeMl', '')),
-          ambilKolomAngka(row, peta, 'hppSatuan', 0),
+          ambilKolomAngkaAtauKosong(row, peta, 'hppSatuan'),
           ambilKolomAngka(row, peta, 'jumlah', 0),
           ambilKolomAngka(row, peta, 'totalHarga', 0),
           ambilKolomTeks(row, peta, 'metode', ''),
           ambilKolomAngka(row, peta, 'uangDibayar', 0),
           ambilKolomAngka(row, peta, 'uangKembali', 0),
-          ambilKolomAngka(row, peta, 'modal', 0),
-          ambilKolomAngka(row, peta, 'biayaOperasional', 0),
-          ambilKolomAngka(row, peta, 'labaBersih', 0)
+          ambilKolomAngkaAtauKosong(row, peta, 'modal'),
+          ambilKolomAngkaAtauKosong(row, peta, 'biayaOperasional'),
+          ambilKolomAngkaAtauKosong(row, peta, 'labaBersih')
         ]);
       }
     }
@@ -736,7 +744,7 @@ function prosesCheckoutInti(cart, metode, uangDibayar, requestData) {
     for (const item of cart) {
       const itemId = String(item && item.id != null ? item.id : '').trim();
       const itemNama = String(item && item.nama ? item.nama : '').trim();
-      const jumlah = Number(item && item.jumlah != null ? item.jumlah : 0);
+      const jumlah = parseAngkaToleran(item && item.jumlah != null ? item.jumlah : 0);
 
       if (!itemId) {
         return { status: "error", message: "ID produk tidak valid." };
@@ -752,7 +760,7 @@ function prosesCheckoutInti(cart, metode, uangDibayar, requestData) {
       }
       const produk = dataProduk[idx];
 
-      const hargaSatuan = ambilKolomAngka(produk, petaProduk, 'harga', 0);
+      const hargaSatuan = ambilKolomAngkaToleran(produk, petaProduk, 'harga', 0);
       const totalHargaItem = hargaSatuan * jumlah;
       grandTotal += totalHargaItem;
 
@@ -760,15 +768,15 @@ function prosesCheckoutInti(cart, metode, uangDibayar, requestData) {
       // Fallback lama ke kolom E adalah sumber bug Modal tidak konsisten:
       // kolom E = foto_url, tapi pernah holds angka Modal per batch restock
       // sehingga Rp15.000 / Rp50.000 bocor ke Laba Bersih per transaksi.
-      let modalSatuan = ambilKolomAngka(produk, petaProduk, 'hpp', 0);
+      let modalSatuan = ambilKolomAngkaToleran(produk, petaProduk, 'hpp', 0);
       // HPP dari frontend (payload produk membawa kolom 'hpp') menang bila
       // valid & > 0 — praktis selalu terisi karena dibaca dari sheet yang sama.
-      const hppFrontend = Number(item && item.hpp != null ? item.hpp : 0);
+      const hppFrontend = parseAngkaToleran(item && item.hpp != null ? item.hpp : 0);
       if (Number.isFinite(hppFrontend) && hppFrontend > 0) {
         modalSatuan = hppFrontend;
       }
       if (!(modalSatuan > 0)) {
-        Logger.log('prosesCheckout: HPP produk ' + itemId + ' kosong/tidak ditemukan di sheet Produk — Modal & Laba Bersih akan memakai 0 untuk HPP.');
+        Logger.log('prosesCheckout: HPP produk ' + itemId + ' kosong/tidak terbaca — HPP Satuan, Modal & Laba Bersih akan ditulis KOSONG (bukan 0) sebagai penanda; transaksi tetap diproses.');
       }
 
       // volume_ml = kolom volume_ml (G). Kolom aslina diutamakan; hanya
@@ -784,6 +792,7 @@ function prosesCheckoutInti(cart, metode, uangDibayar, requestData) {
         hargaSatuan: hargaSatuan,
         totalHarga: totalHargaItem,
         modalSatuan: modalSatuan,
+        hppTerbaca: modalSatuan > 0,
         volumeMl: volumeMl
       });
     }
@@ -811,7 +820,7 @@ function prosesCheckoutInti(cart, metode, uangDibayar, requestData) {
     let finalBayar = grandTotal;
 
     if (String(metode).toUpperCase() === "CASH") {
-      finalBayar = Number(uangDibayar);
+      finalBayar = parseAngkaToleran(uangDibayar);
       if (!Number.isFinite(finalBayar) || finalBayar <= 0) {
         return { status: "error", message: "Nominal pembayaran CASH tidak valid." };
       }
@@ -845,15 +854,20 @@ function prosesCheckoutInti(cart, metode, uangDibayar, requestData) {
       }
 
       const barisPenjualan = validatedItems.map(item => {
-        const totalModal = item.modalSatuan * item.jumlah;
+        // P3: HPP tak terbaca -> HPP Satuan, Modal, dan Laba Bersih ditulis
+        // KOSONG (bukan 0) sebagai penanda, supaya tidak terlihat seperti data
+        // yang dihitung benar. Transaksi tetap boleh diselesaikan.
+        const hppTerbaca = item.hppTerbaca === true;
+        const totalModalNum = item.modalSatuan * item.jumlah;
+        const totalModal = hppTerbaca ? totalModalNum : '';
         const biayaOperasional = 0;
-        const labaBersih = item.totalHarga - totalModal - biayaOperasional;
+        const labaBersih = hppTerbaca ? item.totalHarga - totalModalNum - biayaOperasional : '';
         return susunBarisKolom({
           id: transaksi,
           tanggal: tanggal,
           namaProduk: item.nama,
           volumeMl: item.volumeMl,
-          hppSatuan: item.modalSatuan,
+          hppSatuan: hppTerbaca ? item.modalSatuan : '',
           jumlah: item.jumlah,
           totalHarga: item.totalHarga,
           metode: metode,
@@ -1635,6 +1649,61 @@ function ambilKolomAngka(row, peta, field, fallback) {
 function ambilKolomTeks(row, peta, field, fallback) {
   const v = ambilKolom(row, peta, field, fallback);
   return String(v == null ? (fallback || '') : v);
+}
+/**
+ * Angka ATAU KOSONG: sel kosong diteruskan apa adanya (""), bukan dipaksa 0.
+ *
+ * Dipakai untuk kolom yang P3 tulis kosong sebagai penanda "HPP tak
+ * terbaca" (HPP Satuan, Modal, Biaya Operasional, Laba Bersih). Kalau sel
+ * kosong dipaksa jadi 0, kasir/dashboard membaca "tidak dihitung" sebagai
+ * "nol" — dua arti berbeda jadi satu. Kolom lain (Jumlah, Total Harga)
+ * tetap pakai ambilKolomAngka supaya tidak ada perubahan di sana.
+ * Sel terisi angka (termasuk 0 yang disengaja) tetap dikirim sebagai angka.
+ */
+function ambilKolomAngkaAtauKosong(row, peta, field) {
+  const mentah = ambilKolom(row, peta, field, '');
+  if (mentah === '' || mentah == null) return '';
+  const n = parseAngkaToleran(mentah);
+  return Number.isFinite(n) ? n : 0;
+}
+
+/** Ambil satu field sebagai angka dengan parsing toleran format id-ID (P1/P2). */
+function ambilKolomAngkaToleran(row, peta, field, fallback) {
+  const v = ambilKolom(row, peta, field, fallback);
+  const n = parseAngkaToleran(v);
+  return Number.isFinite(n) ? n : (fallback === undefined ? 0 : fallback);
+}
+
+/**
+ * Parsing angka toleran format Indonesia (P1):
+ *   - "Rp 12.000" / "12.000"  -> 12000    (titik = pemisah ribuan)
+ *   - "1.234,56"              -> 1234.56  (koma = desimal)
+ *   - "10,5"                  -> 10.5
+ *   - "10500"                 -> 10500
+ * @param {*} v nilai mentah sel
+ * @return {number} NaN bila tidak bisa diurai sama sekali.
+ * Catatan konteks: nilai harga/HPP di POS ini utuh (rupiah), jadi
+ * titik tunggal dianggap pemisah ribuan, bukan desimal.
+ */
+function parseAngkaToleran(v) {
+  if (v == null) return NaN;
+  if (typeof v === 'number' && Number.isFinite(v)) return v;
+  if (v instanceof Date) return v.getTime();
+  let s = String(v).trim();
+  if (s === '') return NaN;
+  s = s.replace(/[Rp\s]/gi, '');
+  const adaTitik = s.indexOf('.') !== -1;
+  const adaKoma = s.indexOf(',') !== -1;
+  if (adaKoma) {
+    const bagian = s.split(',');
+    const utuh = bagian[0].replace(/\./g, '');
+    const pecahan = bagian.slice(1).join('');
+    s = utuh + (pecahan ? '.' + pecahan : '');
+  } else if (adaTitik) {
+    s = s.replace(/\./g, '');
+  }
+  const n = Number(s);
+  return Number.isFinite(n) ? n : NaN;
 }
 
 /**

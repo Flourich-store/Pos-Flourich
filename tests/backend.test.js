@@ -320,6 +320,55 @@ r.suite('Regresi Skema Penjualan — reader berbasis NAMA HEADER (bukan posisi)'
     r.assertEq(out[2][2], 'Semangka Leci 350 ml', 'nama produk lama (alias) apa adanya');
   });
 
+  r.test('P2 (jalur nyata): getInitialData juga baca stok/harga/HPP toleran', () => {
+    // getInitialData punya loop sendiri (bukan memanggil getProdukData) dan
+    // inilah yang dipakai kasir saat login. Kalau loop ini masih Number(),
+    // HPP/harga berformat teks di sheet jadi terpotong di titik.
+    const gas = createGasMock();
+    const spreadsheet = gas.createSpreadsheetMock([
+      HEADER_PRODUK_NYATA,
+      ['SL0002', 'Semangci 350 ml', '9', '14.000', '', '9.500', '350']
+    ], { penjualanRows: [HEADER_PENJUALAN_13] });
+    gas.scriptRuntime.activeSpreadsheet = spreadsheet;
+    const backend = loadBackend(gas);
+
+    const p = backend.getInitialData(60).produk;
+    const row = p[1];
+    r.assertEq(row[2], 9, 'Stok teks "9" -> 9');
+    r.assertEq(row[3], 14000, 'Harga teks "14.000" -> 14000 (bukan 14)');
+    r.assertEq(row[5], 9500, 'HPP teks "9.500" -> 9500 (bukan 9.5)');
+    r.assertEq(row[6], 350, 'volume_ml teks "350" -> 350');
+  });
+
+  r.test('P5: HPP/Modal/Biaya/Laba yang KOSONG diteruskan sebagai "" (bukan 0 diam-diam)', () => {
+    // P3 menulis sel kosong sebagai penanda "HPP tak terbaca". Payload ke
+    // frontend harus ikut kosong supaya tampilan bisa membedakan
+    // "tidak dihitung" dari "nol" — kalau dipaksa 0, kasir mengira laba 0.
+    const { backend } = setupNyata();
+    const out = backend.getPenjualanData();
+
+    const kosong = out[1]; // FR-0001 sparse: kolom finansial kosong semua
+    r.assertEq(kosong[4], '', 'HPP Satuan kosong -> "" (bukan 0)');
+    r.assertEq(kosong[10], '', 'Modal kosong -> "" (bukan 0)');
+    r.assertEq(kosong[11], '', 'Biaya Operasional kosong -> "" (bukan 0)');
+    r.assertEq(kosong[12], '', 'Laba bersih kosong -> "" (bukan 0)');
+
+    // Kolom yang TIDAK pernah dikosongkan P3 tetap angka (tanpa regresi).
+    r.assertEq(kosong[5], 0, 'Jumlah kosong tetap 0');
+    r.assertEq(kosong[6], 0, 'Total Harga kosong tetap 0');
+
+    // Baris yang terisi tetap angka utuh.
+    const isi = out[3]; // FR-0003
+    r.assertEq(isi[4], 9500, 'HPP Satuan terisi tetap angka');
+    r.assertEq(isi[10], 28500, 'Modal terisi tetap angka');
+    r.assertEq(isi[11], 0, 'Biaya Operasional 0 (terisi) tetap angka 0, bukan ""');
+    r.assertEq(isi[12], 7500, 'Laba terisi tetap angka');
+
+    // Bentuk payload tetap 13 kolom & JSON-aman.
+    r.assertEq(out[0].length, 13, 'header tetap 13 kolom');
+    r.assertDoesNotThrow(() => JSON.parse(JSON.stringify(out)), 'payload tetap JSON-valid');
+  });
+
   r.test('getPenjualanData & getInitialData menghasilkan baris IDENTIK', () => {
     const { backend } = setupNyata();
     const a = JSON.stringify(backend.getPenjualanData());
@@ -429,6 +478,142 @@ r.suite('Regresi Skema Penjualan — writer berbasis NAMA HEADER (Fix 3)', () =>
     r.assertEq(t[8], 18000, 'Modal di idx 8');
     r.assertEq(t[10], 10000, 'Laba bersih di idx 10');
     r.assertIncludes(gas.Logger.logs.join('\n'), 'volumeMl', 'field tanpa kolom dilaporkan, bukan di-shift');
+  });
+});
+
+// ════════════════════════════════════════════════════════════════
+// P1-P3 — Checkout: parsing angka toleran format id-ID, baca HPP
+// toleran, dan Modal/Laba KOSONG (bukan 0) bila HPP tak terbaca.
+// ════════════════════════════════════════════════════════════════
+
+r.suite('P1-P2 — Checkout menerima angka format Indonesia (parseAngkaToleran)', () => {
+
+  r.test('P1: jumlah string, hpp string, uang bayar "Rp 50.000" -> transaksi tetap benar', () => {
+    const { backend, spreadsheet } = setupNyata();
+    const sebelum = spreadsheet.__penjualan.__rows().length;
+
+    const res = backend.prosesCheckout(
+      [{ id: 'SL0002', nama: 'Semangci 350 ml', jumlah: '2', hpp: '9.500' }],
+      'CASH',
+      'Rp 50.000'
+    );
+
+    r.assertEq(res.status, 'success', 'checkout sukses dengan angka berformat id-ID');
+    r.assertEq(res.total, 28000, 'total = 14000 x 2');
+    r.assertEq(res.bayar, 50000, '"Rp 50.000" terurai jadi 50000');
+    r.assertEq(res.kembali, 22000, 'kembali = 50000 - 28000');
+
+    const rows = spreadsheet.__penjualan.__rows();
+    r.assertEq(rows.length, sebelum + 1, 'tepat 1 baris baru');
+    const t = rows[sebelum];
+    r.assertEq(t[4], 9500, 'kolom E HPP Satuan = 9500 (dari string "9.500")');
+    r.assertEq(t[5], 2, 'kolom F Jumlah = 2 (dari string "2")');
+    r.assertEq(t[6], 28000, 'kolom G Total Harga = 28000');
+    r.assertEq(t[8], 50000, 'kolom I Uang Dibayar = 50000');
+    r.assertEq(t[10], 19000, 'kolom K Modal = 9500 x 2');
+    r.assertEq(t[12], 9000, 'kolom M Laba bersih = 28000 - 19000');
+  });
+
+  r.test('P2: HPP TEKS "10.500" di sheet Produk -> Modal tertulis BENAR, bukan 10.5 dan bukan kosong', () => {
+    // Number("10.500") = 10.5 (memotong di titik) — bug yang dicegah parser toleran.
+    const gas = createGasMock();
+    const spreadsheet = gas.createSpreadsheetMock([
+      HEADER_PRODUK_NYATA,
+      ['SL0002', 'Semangci 350 ml', 9, 14000, '', '10.500', 350]
+    ], { penjualanRows: [HEADER_PENJUALAN_13] });
+    gas.scriptRuntime.activeSpreadsheet = spreadsheet;
+    const backend = loadBackend(gas);
+
+    // Payload produk juga harus membawa HPP sebagai ANGKA utuh, bukan 10.5.
+    const byId = {};
+    backend.getProdukData().slice(1).forEach(x => { byId[x[0]] = x; });
+    r.assertEq(byId['SL0002'][5], 10500, 'payload produk HPP = 10500 (bukan 10.5)');
+
+    const res = backend.prosesCheckout(
+      [{ id: 'SL0002', nama: 'Semangci 350 ml', jumlah: 2 }],
+      'CASH', 50000
+    );
+    r.assertEq(res.status, 'success', 'checkout sukses');
+
+    const t = spreadsheet.__penjualan.__rows()[1];
+    r.assertEq(t[4], 10500, 'kolom E HPP Satuan = 10500 (HPP sheet dibaca toleran)');
+    r.assertEq(t[10], 21000, 'kolom K Modal = 10500 x 2 = 21000');
+    r.assertEq(t[12], 7000, 'kolom M Laba bersih = 28000 - 21000');
+  });
+
+  r.test('P2: HPP dari frontend menang & tetap toleran ("Rp 9.500")', () => {
+    const { backend, spreadsheet } = setupNyata();
+    const sebelum = spreadsheet.__penjualan.__rows().length;
+
+    const res = backend.prosesCheckout(
+      [{ id: 'SL0002', nama: 'Semangci 350 ml', jumlah: 2, hpp: 'Rp 9.500' }],
+      'QRIS', 0
+    );
+    r.assertEq(res.status, 'success', 'checkout sukses');
+
+    const t = spreadsheet.__penjualan.__rows()[sebelum];
+    r.assertEq(t[4], 9500, 'kolom E HPP Satuan = 9500 (hpp frontend "Rp 9.500")');
+    r.assertEq(t[10], 19000, 'kolom K Modal = 9500 x 2');
+  });
+});
+
+r.suite('P3 — HPP tak terbaca: Modal/Laba KOSONG (bukan 0), transaksi tetap boleh selesai', () => {
+
+  r.test('HPP kosong di sheet & payload -> Modal & Laba KOSONG, BUKAN 0, status tetap success', () => {
+    // PRODUK_VALID tidak punya kolom HPP -> HPP tak terbaca.
+    const { backend, spreadsheet } = setupBackend();
+    const sebelum = spreadsheet.__penjualan.__rows().length;
+
+    const res = backend.prosesCheckout(
+      [{ id: '1', nama: 'Semangci 250 ml', jumlah: 2, total: 30000 }],
+      'CASH',
+      50000
+    );
+
+    r.assertEq(res.status, 'success', 'kasir TETAP boleh menyelesaikan transaksi');
+    r.assertEq(res.total, 30000, 'total tetap dihitung normal');
+    r.assertEq(res.kembali, 20000, 'kembali tetap benar');
+
+    const rows = spreadsheet.__penjualan.__rows();
+    r.assertEq(rows.length, sebelum + 1, 'baris tetap tertulis (tidak diblokir)');
+    const t = rows[sebelum];
+    r.assertEq(t[4], '', 'kolom E HPP Satuan KOSONG (bukan 0)');
+    r.assertEq(t[10], '', 'kolom K Modal KOSONG (bukan 0)');
+    r.assertEq(t[12], '', 'kolom M Laba Bersih KOSONG (bukan 0)');
+    r.assertFalse(t[10] === 0, 'Modal TIDAK boleh 0 diam-diam');
+    r.assertFalse(t[12] === 0, 'Laba TIDAK boleh 0 diam-diam');
+    // Kolom yang TIDAK bergantung HPP tetap terisi benar.
+    r.assertEq(t[5], 2, 'kolom F Jumlah tetap 2');
+    r.assertEq(t[6], 30000, 'kolom G Total Harga tetap 30000');
+    r.assertEq(t[7], 'CASH', 'kolom H Metode tetap CASH');
+  });
+
+  r.test('HPP tak terbaca -> logger menjelaskan, dan stok produk tetap berkurang', () => {
+    const { gas, backend, spreadsheet } = setupBackend();
+
+    backend.prosesCheckout(
+      [{ id: '1', nama: 'Semangci 250 ml', jumlah: 2, total: 30000 }],
+      'CASH', 50000
+    );
+
+    r.assertIncludes(gas.Logger.logs.join('\n'), 'KOSONG', 'logger menyebut sel ditulis KOSONG');
+    r.assertEq(spreadsheet.__produk.__rows()[1][2], 48, 'stok tetap berkurang 50->48');
+  });
+
+  r.test('HPP terbaca -> Modal/Laba tetap TERISI angka (tidak ikut jadi kosong)', () => {
+    const { backend, spreadsheet } = setupNyata();
+    const sebelum = spreadsheet.__penjualan.__rows().length;
+
+    const res = backend.prosesCheckout(
+      [{ id: 'WNA0001', nama: 'Wonapel 250 ml', jumlah: 3 }],
+      'CASH', 50000
+    );
+    r.assertEq(res.status, 'success', 'checkout sukses');
+
+    const t = spreadsheet.__penjualan.__rows()[sebelum];
+    r.assertEq(t[4], 9500, 'kolom E HPP Satuan = 9500');
+    r.assertEq(t[10], 28500, 'kolom K Modal = 9500 x 3');
+    r.assertEq(t[12], 7500, 'kolom M Laba = 36000 - 28500');
   });
 });
 
@@ -717,6 +902,21 @@ r.suite('Diagnostik — parseAngkaToleran (parser angka format Indonesia)', () =
     r.assertOk(Number.isNaN(backend.parseAngkaToleran('abc')), 'teks murni -> NaN');
     r.assertOk(Number.isNaN(backend.parseAngkaToleran('')), 'string kosong -> NaN');
     r.assertOk(Number.isNaN(backend.parseAngkaToleran(null)), 'null -> NaN');
+  });
+
+  r.test('P1 jalan pintas: number (bukan string) langsung dikembalikan utuh', () => {
+    const { backend } = setup();
+    r.assertEq(backend.parseAngkaToleran(1234.5), 1234.5, 'number desimal 1234.5 utuh (bukan jadi 12345)');
+    r.assertEq(backend.parseAngkaToleran(10500), 10500, 'number bulat 10500 utuh');
+    r.assertEq(backend.parseAngkaToleran(0), 0, 'number 0 tetap 0');
+    r.assertEq(backend.parseAngkaToleran(-2500), -2500, 'number negatif utuh');
+  });
+
+  r.test('P1 format Indonesia lengkap: "1.234,56", "Rp 10.500", "10500"', () => {
+    const { backend } = setup();
+    r.assertEq(backend.parseAngkaToleran('1.234,56'), 1234.56, '"1.234,56" -> 1234.56');
+    r.assertEq(backend.parseAngkaToleran('Rp 10.500'), 10500, '"Rp 10.500" -> 10500');
+    r.assertEq(backend.parseAngkaToleran('10500'), 10500, '"10500" -> 10500');
   });
 });
 

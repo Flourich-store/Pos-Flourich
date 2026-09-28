@@ -9,7 +9,7 @@
   <!-- Penanda versi halaman: dipakai self-check di blok script bawah untuk
        auto-reload bila browser mobile masih menyimpan HTML lama (GitHub Pages
        meng-cache 10 menit). Naikkan BERSAMAAN dengan VERSI_HTML tiap rilis. -->
-  <meta name="app-version" content="85">
+  <meta name="app-version" content="86">
 
   <link rel="icon" type="image/png" sizes="192x192"
     href="https://lh3.googleusercontent.com/d/1kbCU9E4sSQTdBylR24DFnRvsX1cAT">
@@ -1929,7 +1929,7 @@
     // berkurang setelah checkout" di HP: perangkat menjalankan kode tua tanpa
     // sadar. Bila versi di server lebih baru dari versi yang berjalan, muat
     // ulang SEKALI otomatis. Penanda versi = <meta name="app-version">.
-    const VERSI_HTML = 85;
+    const VERSI_HTML = 86;
     function periksaVersiHalaman() {
       try {
         if (window.location.protocol === 'file:') return; // mode lokal: tidak relevan
@@ -2998,6 +2998,19 @@
       applyFilter(true);
     }
 
+    /**
+     * Format sel rupiah di tabel Riwayat.
+     * Sel KOSONG ("") tampil "—", bukan "Rp 0": backend menulis HPP Satuan,
+     * Modal, Biaya Operasional, dan Laba Bersih kosong ketika HPP produk
+     * tak terbaca, jadi "—" berarti "tidak dihitung", bukan "nol".
+     * Angka 0 yang disengaja tetap tampil "Rp 0".
+     */
+    function formatSelKosong(row, i) {
+      const v = row[i];
+      if (v === '' || v === undefined || v === null) return '—';
+      return 'Rp ' + Number(v).toLocaleString('id-ID');
+    }
+
     function renderPenjualanTable() {
       const tbodyJual = document.querySelector('#penjualanTable tbody');
       tbodyJual.innerHTML = '';
@@ -3018,7 +3031,7 @@
       let barisHtml = '';
       for (let i = startIndex; i < endIndex; i++) {
         const row = filteredPenjualanData[i];
-        const isCash = String(row[5] || '').toUpperCase() === 'CASH';
+        const isCash = String(row[7] || '').toUpperCase() === 'CASH';
         const badgeClass = isCash ? 'badge badge-cash' : 'badge badge-qris';
 
         barisHtml += `<tr>
@@ -3026,15 +3039,15 @@
           <td>${row[1] || ''}</td>
           <td><b>${row[2] || ''}</b></td>
           <td>${row[3] === '' || row[3] == null ? '-' : row[3]}</td>
-          <td>Rp ${Number(row[4] || 0).toLocaleString('id-ID')}</td>
+          <td>${formatSelKosong(row, 4)}</td>
           <td>${row[5] || 0}</td>
           <td><b>Rp ${Number(row[6] || 0).toLocaleString('id-ID')}</b></td>
           <td><span class="${badgeClass}">${row[7] || '-'}</span></td>
           <td>Rp ${Number(row[8] || 0).toLocaleString('id-ID')}</td>
           <td>Rp ${Number(row[9] || 0).toLocaleString('id-ID')}</td>
-          <td>Rp ${Number(row[10] || 0).toLocaleString('id-ID')}</td>
-          <td>Rp ${Number(row[11] || 0).toLocaleString('id-ID')}</td>
-          <td><b>Rp ${Number(row[12] || 0).toLocaleString('id-ID')}</b></td>
+          <td>${formatSelKosong(row, 10)}</td>
+          <td>${formatSelKosong(row, 11)}</td>
+          <td><b>${formatSelKosong(row, 12)}</b></td>
         </tr>`;
       }
       tbodyJual.innerHTML = barisHtml;
@@ -3133,6 +3146,7 @@
               <div class="cart-item-info">
                 <div class="cart-item-name">${item.nama}</div>
                 <div class="cart-item-sub">Rp ${Number(unitPrice).toLocaleString('id-ID')} / pcs</div>
+                ${Number(item.hpp) > 0 ? '' : '<div class="cart-item-sub" style="color:#b45309;font-weight:600;">HPP tak terbaca — Modal &amp; Laba akan dicatat kosong</div>'}
               </div>
               <div class="cart-qty-ctrl">
                 <button type="button" class="btn-qty" onclick="updateCartQty(${index}, -1)">-</button>

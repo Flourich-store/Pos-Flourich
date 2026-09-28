@@ -8,41 +8,11 @@
 // Ketergantungan: helper dari Code.js (satu project Apps Script —
 // seluruh file .js digabung saat deploy):
 //   petaKolomPenjualanSheet, petaKolomProdukSheet, ambilKolom,
-//   ambilKolomAngka, hitungVolumeMl, formatVolumeMl,
+//   ambilKolomAngka, ambilKolomAngkaToleran, parseAngkaToleran,
+//   hitungVolumeMl, formatVolumeMl,
 //   selaraskanNamaProduk, getSpreadsheet,
 //   PETA_KOLOM_PENJUALAN, PETA_KOLOM_PRODUK
 // ════════════════════════════════════════════════════════════════
-
-/**
- * Parsing angka toleran format Indonesia:
- *   - "Rp 12.000" / "12.000"  -> 12000    (titik = pemisah ribuan)
- *   - "1.234,56"              -> 1234.56  (koma = desimal)
- *   - "10,5"                  -> 10.5
- *   - "10500"                 -> 10500
- * @param {*} v nilai mentah sel
- * @return {number} NaN bila tidak bisa diurai sama sekali.
- * Catatan konteks: nilai harga/HPP di POS ini utuh (rupiah), jadi
- * titik tunggal dianggap pemisah ribuan, bukan desimal.
- */
-function parseAngkaToleran(v) {
-  if (v == null) return NaN;
-  if (v instanceof Date) return v.getTime();
-  let s = String(v).trim();
-  if (s === '') return NaN;
-  s = s.replace(/[Rp\s]/gi, '');
-  const adaTitik = s.indexOf('.') !== -1;
-  const adaKoma = s.indexOf(',') !== -1;
-  if (adaKoma) {
-    const bagian = s.split(',');
-    const utuh = bagian[0].replace(/\./g, '');
-    const pecahan = bagian.slice(1).join('');
-    s = utuh + (pecahan ? '.' + pecahan : '');
-  } else if (adaTitik) {
-    s = s.replace(/\./g, '');
-  }
-  const n = Number(s);
-  return Number.isFinite(n) ? n : NaN;
-}
 
 /** Bunyikan nilai mentah jadi teks rapi untuk laporan (Date -> string). */
 function _fmt(v, tz) {
