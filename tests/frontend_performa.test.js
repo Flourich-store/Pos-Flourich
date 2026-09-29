@@ -519,4 +519,125 @@ r.suite('Tick sinkronisasi 45 detik tidak membuang request sia-sia', () => {
   });
 });
 
+// ============================================================
+// Diagnosis guard interaksi nyangkut
+// ============================================================
+// Yang sudah TERBUKTI di live adalah akibatnya (update server ditelan
+// diam-diam), BUKAN pemicunya. Untuk menutup diagnosis di device kasir
+// yang masih bermasalah, kita butuh satu bukti: elemen apa yang masih
+// menahan guard. Diagnosis ini HANYA mencatat -- ia tidak pernah melepas
+// flag, karena melepas tanpa bukti berarti menebak dan bisa menimpa input
+// kasir yang sedang diketik.
+r.suite('Diagnosis guard interaksi nyangkap (hanya mencatat, tidak menebak)', () => {
+
+  const SEKON = 1000;
+
+  function siapkan() {
+    const dom = createDomStub();
+    const app = loadFrontend(dom, RESPON_DATA);
+    dom.triggerEvent('document', 'DOMContentLoaded');
+    app.call('startRealtimeSync');
+    return { dom, app, cb: dom.window.__lastIntervalCallback };
+  }
+
+  // Kasir benar-benar fokus ke sebuah kolom, seperti di perangkat sungguhan.
+  function fokusKe(s, id) {
+    const el = s.dom.window.__elements[id];
+    el.tagName = 'INPUT';
+    s.dom.window.document.activeElement = el;
+    s.dom.triggerEvent('document', 'focusin', { target: el });
+  }
+
+  function warning(s) {
+    return s.dom.consoleLogs.filter(x => x.indexOf('guard interaksi nyangkap') !== -1);
+  }
+
+  // Palsukan lamanya guard menyala tanpa menunggu jam-jam.
+  function setUmur(s, detik) {
+    s.app.set('interaksiMulaiAt', new Date().getTime() - detik * SEKON);
+  }
+
+  r.test('guard nyangkap lewat ambang: warning menyebut elemen fokus & status tertahan', () => {
+    const s = siapkan();
+    fokusKe(s, 'filterSearch');
+    r.assertEq(s.app.get('isUserInteracting'), true, 'focusin di kolom menyalakan guard');
+
+    setUmur(s, 200);   // 200 detik >> ambang
+    s.cb();
+
+    const w = warning(s);
+    r.assertEq(w.length, 1, 'tepat satu warning muncul');
+    r.assertIncludes(w[0], 'filterSearch', 'warning menyebut elemen yang menahan fokus');
+    r.assertIncludes(w[0], 'update tertahan', 'warning menyebut status update yang tertahan');
+  });
+
+  r.test('interaksi wajar kasir mengetik TIDAK memunculkan warning', () => {
+    // False alarm akan membuat kasir mengabaikan console, dan startled
+    // kalau setiap 45 detik ada peringatan palsu.
+    const s = siapkan();
+    fokusKe(s, 'inpBayar');
+    setUmur(s, 5);     // 5 detik: masih wajar untuk mengetik
+    s.cb();
+    r.assertEq(warning(s).length, 0, 'tidak ada warning untuk interaksi biasa');
+  });
+
+  r.test('warning hanya sekali per episode (tidak spam tiap 45 detik)', () => {
+    const s = siapkan();
+    fokusKe(s, 'filterSearch');
+    setUmur(s, 200);
+    s.cb();
+    s.cb();
+    s.cb();
+    r.assertEq(warning(s).length, 1, 'tiga tick berturut-turut tetap satu warning');
+  });
+
+  r.test('episode nyangkut berikutnya tetap terdeteksi setelah guard dilepas', () => {
+    const s = siapkan();
+    fokusKe(s, 'filterSearch');
+    setUmur(s, 200);
+    s.cb();
+    r.assertEq(warning(s).length, 1, 'episode pertama dilaporkan');
+
+    s.dom.triggerEvent('document', 'focusout');       // interaksi selesai
+    fokusKe(s, 'inpBayar');                           // nyangkut lagi, di kolom lain
+    setUmur(s, 300);
+    s.cb();
+
+    const w = warning(s);
+    r.assertEq(w.length, 2, 'episode kedua dilaporkan terpisah');
+    r.assertIncludes(w[1], 'inpBayar', 'episode kedua menunjuk elemen yang benar');
+  });
+
+  r.test('KEAMANAN: diagnosis tidak pernah melepas guard sendiri', () => {
+    // Ini yang paling penting. Melepas flag otomatis berarti menebak kapan
+    // "cukup", dan kalau tebak meleset maka input kasir yang sedang diketik
+    // bisa tertimpa render di tengah pengetikan. Diagnosis hanya boleh
+    const s = siapkan();
+    fokusKe(s, 'filterSearch');
+    setUmur(s, 200);
+    s.cb();
+    r.assertEq(s.app.get('isUserInteracting'), true,
+      'guard tetap menyala setelah warning (tidak ada pelepasan otomatis)');
+  });
+
+  r.test('laporanInteraksiPos() melaporkan state tanpa mengubah apa pun', () => {
+    // Cara kasir/teknisi mengambil bukti di perangkat bermasalah: satu
+    // perintah di console, tanpa harus menggulir log yang panjang.
+    const s = siapkan();
+    fokusKe(s, 'filterSearch');
+    setUmur(s, 200);
+
+    const laporan = s.app.call('laporanInteraksiPos');
+    r.assertOk(laporan && typeof laporan === 'object', 'mengembalikan objek laporan');
+    r.assertEq(laporan.interaksiMenyala, true, 'laporan tahu guard sedang menyala');
+    r.assertEq(laporan.tahanDetik, 200, 'laporan menyebut lama guard menyala');
+    r.assertIncludes(laporan.fokus, 'filterSearch', 'laporan menyebut elemen fokus');
+    r.assertEq(laporan.updateTertahan, false, 'laporan menyebut status update tertahan');
+
+    // Melaporkan harus murni membaca, tidak mengubah state.
+    r.assertEq(s.app.get('isUserInteracting'), true, 'laporan tidak melepas guard');
+    r.assertEq(s.app.get('interaksiMulaiAt') > 0, true, 'laporan tidak mereset pencatat waktu');
+  });
+});
+
 r.run('Performa Checkout & Refresh').then(ok => { process.exit(ok ? 0 : 1); });
