@@ -248,6 +248,37 @@ r.suite('Login sukses: filter tabel dibersihkan', () => {
 
 });
 
+// ============================================================
+// v89.1: login paralel dua endpoint (hanya mode produksi)
+// ============================================================
+
+r.suite('Login paralel: mode lokal tetap lewat mock (tanpa fetch nyata)', () => {
+
+  r.test('di file:/ login tetap memakai mock checkLogin (tidak crash, tidak fetch)', () => {
+    let fetchTerpanggil = false;
+    const sk = loadLoginSkenario({});
+    sk.app.sandbox.fetch = function () {
+      fetchTerpanggil = true;
+      return Promise.reject(new Error('fetch nyata TIDAK boleh dipanggil di mode lokal'));
+    };
+    // Pastikan mock checkLogin tercatat saat dipanggil
+    let checkLoginTerpanggil = false;
+    const cekAsli = sk.dom.window.google.script.run.checkLogin;
+    sk.dom.window.google.script.run.checkLogin = function (u, p) {
+      checkLoginTerpanggil = true;
+      return cekAsli(u, p);
+    };
+
+    isiKredensialAdmin(sk.dom);
+    sk.app.call('login');
+
+    r.assertOk(checkLoginTerpanggil, 'mock checkLogin dipakai di mode lokal');
+    r.assertOk(!fetchTerpanggil, 'fetch nyata tidak dipanggil di mode lokal');
+    r.assertEq(stokProduk(sk.app, '1'), 50, 'alur login sukses berjalan normal via mock');
+  });
+
+});
+
 r.run('frontend_login.test.js').then(ok => {
   process.exit(ok ? 0 : 1);
 });

@@ -9,7 +9,7 @@
   <!-- Penanda versi halaman: dipakai self-check di blok script bawah untuk
        auto-reload bila browser mobile masih menyimpan HTML lama (GitHub Pages
        meng-cache 10 menit). Naikkan BERSAMAAN dengan VERSI_HTML tiap rilis. -->
-  <meta name="app-version" content="89">
+  <meta name="app-version" content="90">
 
   <link rel="icon" type="image/png" sizes="192x192"
     href="https://lh3.googleusercontent.com/d/1kbCU9E4sSQTdBylR24DFnRvsX1cAT">
@@ -1955,7 +1955,7 @@
     // berkurang setelah checkout" di HP: perangkat menjalankan kode tua tanpa
     // sadar. Bila versi di server lebih baru dari versi yang berjalan, muat
     // ulang SEKALI otomatis. Penanda versi = <meta name="app-version">.
-    const VERSI_HTML = 89;
+    const VERSI_HTML = 90;
     function periksaVersiHalaman() {
       try {
         if (window.location.protocol === 'file:') return; // mode lokal: tidak relevan
@@ -2531,6 +2531,80 @@
       })();
     }
 
+    /**
+     * LOGIN PARALEL (v89.1): kirim checkLogin ke endpoint UTAMA dan CADANGAN
+     * SEKALIGUS — jawaban tercepat menang, yang lain diabaikan.
+     *
+     * Alasan: ukuran live menunjukkan latency endpoint berfluktuasi ekstrem
+     * (4-13 dtk, bergantian, tanpa pola) akibat routing internal Google yang
+     * tidak stabil — bukan beban aplikasi. Menunggu bergantian berarti kasir
+     * berkali-kali mengena rute lambat. Dengan balapan, waktu tunggu = rute
+     * TERCEPAT saat itu (terukur 2-4 dtk), tanpa mengubah logika login.
+     *
+     * Aman: checkLogin BACA-murni (tidak menulis apa pun), jadi request ganda
+     * tidak mungkin dobel-catat. Kegagalan koneksi di satu endpoint otomatis
+     * tertutup endpoint satunya. Bila cadangan tak terdefinisi (mode lokal/
+     * mock), jalur lama dipakai.
+     */
+    function loginParalel(u, p, onSuccess, onError, opsiLogin) {
+      // Mode lokal (file:/mock): tidak ada endpoint nyata — jalur mock lama.
+      if (typeof isLocalMode !== 'undefined' && isLocalMode) {
+        safeGoogleRun('checkLogin', [u, p], onSuccess, onError, null, false, opsiLogin);
+        return;
+      }
+      const urlCadangan = (typeof API_URL_CADANGAN !== 'undefined' && API_URL_CADANGAN && API_URL_CADANGAN !== API_URL) ? API_URL_CADANGAN : null;
+      if (!urlCadangan) {
+        safeGoogleRun('checkLogin', [u, p], onSuccess, onError, null, false, opsiLogin);
+        return;
+      }
+
+      let selesai = false;
+      const btn = document.getElementById('loginBtn');
+      const selesaikan = (hasil) => {
+        if (selesai) return;
+        selesai = true;
+        onSuccess(hasil);
+      };
+      const gagal = (pesan) => {
+        if (selesai) return;
+        selesai = true;
+        onError(new Error(pesan));
+      };
+      let tersisa = 2; // endpoint yang belum menjawab SUKSES/GAGAL final
+      const selesaiSalah = () => {
+        tersisa--;
+        if (tersisa <= 0 && !selesai) gagal('Koneksi ke server terputus. Periksa sinyal internet lalu coba lagi.');
+      };
+
+      const kirim = (endpoint, adalahCadangan) => {
+        (async () => {
+          try {
+            const response = await fetchDenganTimeout(endpoint + (endpoint.indexOf('?') === -1 ? '?' : '&') + '_cb=' + Date.now(), {
+              method: 'POST',
+              batasMs: (opsiLogin && opsiLogin.timeoutMs) || API_TIMEOUT_MS,
+              headers: { 'Content-Type': 'text/plain;charset=utf-8', 'Accept': 'application/json' },
+              body: JSON.stringify({ action: 'checkLogin', args: [u, p] })
+            });
+            const text = await response.text();
+            if (!response.ok || !text || String(text).trim().charAt(0) === '<') {
+              if (!adalahCadangan) catatHtmlGagal();
+              throw new Error('HTML_GSERVE');
+            }
+            const payload = JSON.parse(text);
+            if (payload.status === 'error') throw new Error(payload.message || 'Permintaan ke server gagal.');
+            resetHtmlGagal();
+            selesaikan(payload.data !== undefined ? payload.data : payload);
+          } catch (e) {
+            selesaiSalah();
+          }
+        })();
+      };
+
+      kirim(API_URL, false);
+      kirim(urlCadangan, true);
+      console.log('[POS] LOGIN PARALEL dikirim ke 2 endpoint — jawaban tercepat menang');
+    }
+
     function login() {
       const u = document.getElementById('userInp').value;
       const p = document.getElementById('passInp').value;
@@ -2568,7 +2642,7 @@
       // cold start, tetap lebih cepat dari default 25 dtk x 3 bila server
       // benar-benar mati (maks ±42 dtk termasuk backoff).
       const opsiLogin = { timeoutMs: 20000, retryMaks: 2 };
-      safeGoogleRun('checkLogin', [u, p], function (res) {
+      loginParalel(u, p, function (res) {
         loginSelesai = true;
         console.log('[POS] LOGIN REQUEST SENT');
         if (btn) {
