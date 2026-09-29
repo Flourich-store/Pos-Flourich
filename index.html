@@ -2571,6 +2571,18 @@
       // (Dulu 10 detik penuh fetch 45KB -> boros kuota & sering bertabrakan dengan
       // interaksi kasir; data tetap segar karena tiap checkout/stok langsung sync.)
       realtimeTimer = setInterval(() => {
+        // Lewati tick yang pasti sia-sia (hanya untuk sinkronisasi BERKALA;
+        // refresh setelah checkout / tambah stok TIDAK lewat sini):
+        //  - tab disembunyikan: tidak ada yang melihat layar, dan browser
+        //    juga membatasi timer di tab latar belakang;
+        //  - kasir sedang berinteraksi: hasil refresh ini pasti ditahan
+        //    renderFromCache (renderTertunda) dan nol byte-nya tampil.
+        //    Membayar 12-28 detik ke Spreadsheet untuk data yang dibuang
+        //    persis masalah "kasir bayar network tanpa dapat apa-apa".
+        // Tick berikutnya (maks 45 detik lagi) mengambil data segar begitu
+        // tab terlihat lagi atau interaksi selesai; jadi tidak ada data
+        // yang hilang permanen, hanya satu tick yang dilewati.
+        if (document.hidden || isUserInteracting) return;
         // Ambil data TERBARU dari server (bukan cache lama) agar stok multi-perangkat
         // tetap sinkron tanpa refresh halaman.
         refreshData(true, true);
