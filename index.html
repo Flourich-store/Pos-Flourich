@@ -1922,7 +1922,7 @@
     // Google yang lambat) endpoint cadangan bertahan 4-8 detik untuk beban yang
     // identik. Dipakai OTOMATIS hanya saat endpoint utama terbukti membalas
     // halaman HTML error Google (bukan JSON) berulang — tanpa request tambahan.
-    const API_URL_CADANGAN = 'https://script.google.com/macros/s/AKfycbyQlMrQNdoXrfT63Q1Y_m1lRiB10mJ35tAKbq26y4WaFNXqhbImM4zZF4eYgd64DaDxaw/exec';
+    const API_URL_CADANGAN = 'https://script.google.com/macros/s/AKfycbzrk5JhtfITPCCPVacMGFwR1kToA7FvCzg673vyHXxGnC7-5OqdkWnLdYUQ4dDOJiaTtw/exec';
     const KUNCI_HTML_GAGAL = 'pos_api_html_gagal';
     function bacaHtmlGagal() {
       try { return Number(localStorage.getItem(KUNCI_HTML_GAGAL)) || 0; } catch (e) { return 0; }
