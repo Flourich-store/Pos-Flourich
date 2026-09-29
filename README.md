@@ -133,11 +133,35 @@ di frontend, keduanya terverifikasi di halaman live.
   bukan kecepatan yang dilihat kasir. Menghapusnya berarti membuang jaring pengaman
   cache hangat — kategori bug yang justru baru diperbaiki. **Keputusan pemilik: jangan
   kerjakan.** Angka di sini supaya tidak dianalisis ulang.
+- **P6 — diagnosis (bukan perbaikan) untuk menutup sisa kasus guard nyangkut.**
+  Yang sudah terbukti adalah akibatnya, belum pemicunya, sehingga diagnosis
+  sebelumnya masih menggantung. Tick sinkronisasi kini mencatat, setiap 90
+  detik (2 tick), bahwa guard sudah menyala terlalu lama, menyebut elemen yang
+  memegangnya dan apakah ada update yang tertahan. Sengaja **tidak pernah
+  melepas guard sendiri** — melepas tanpa bukti berarti menebak kapan
+  "cukup", dan render di tengah pengetikan bisa menimpa input kasir.
+  Ditambah `laporanInteraksiPos()`: satu perintah console untuk mengambil
+  laporan state tanpa menggulir log panjang. Verifikasi end-to-end di DOM
+  asli: `getInitialData` masuk saat guard menyala → `stokTable` 0 baris &
+  `penjualanTable` 1 baris (persis gejala yang dilaporkan kasir), lalu
+  `focusout` melepas guard → 7 dan 10 baris. Guard dalam uji itu menyala 104
+  detik, melewati ambang 90 detik, jadi diagnosisnya tepat sasaran.
 
-Suite: 281 → 295 tes, semua hijau. 9 tes regresi baru (P1 ×5, P2 ×1, P4 ×5, P5 ×3),
+Suite: 281 → 301 tes, semua hijau. 15 tes regresi baru (P1 ×5, P2 ×1, P4 ×5,
 semuanya ditulis lebih dulu dan sudah diamati gagal sebelum kodenya diubah. Assertion
 "interval 45000 ms" yang rapuh (jendela 400 karakter) diganti membaca nilai dari
 argumen `setInterval` — tetap setektif, hanya tahan terhadap komentar tambahan.
+P6 tidak menaikkan versi: ia tidak mengubah apa yang dilihat kasir, hanya
+menambah satu peringatan console. Helper `triggerEvent` kini menerima argumen
+event opsional agar `focusin` bisa diuji di batas event yang sebenarnya.
+
+**Dua jalur distribusi sudah jauh berbeda.** Halaman POS yang dipakai kasir
+berasal dari GitHub Pages (v87, terverifikasi identik dengan file lokal),
+sedangkan route halaman Apps Script di deployment `@89` masih menyajikan
+`index.html` yang jauh lebih lama — tanpa meta `app-version`, tanpa P1/P2/P4,
+0 elemen `<th>` (lokal: 20), dan masih memuat `getPenjualanReport` yang sudah
+dihapus. Deployment `@HEAD` tidak bisa dipakai: halamannya login Google
+(`accounts.google.com/v3/signin/`), jadi kasir pasti butuh otorisasi.
 
 ### Perbaikan v84 — Fase 2: ikon SVG inline (FontAwesome dihapus) + fix payload riwayat
 
