@@ -91,7 +91,7 @@ node tests/audit_input.test.js
   stok sheet tidak disentuh (stok manual); uang kurang ditolak konsisten oleh
   frontend & backend.
 
-### Perbaikan v87 — "tabel kosong" setelah login (P1, P2, P4) + P5
+### Perbaikan v87 — "tabel kosong" setelah login (P1, P2, P4) + P5, diagnosis P6
 
 Akar masalah "login sukses tapi tabel produk/riwayat kosong" terbukti DUA, keduanya
 di frontend, keduanya terverifikasi di halaman live.
@@ -123,7 +123,7 @@ di frontend, keduanya terverifikasi di halaman live.
   Terukur 2 baris log per panggilan, 40 baris untuk 20 panggilan, dan log yang
   berguna (HPP kosong, header tidak ketemu, idempotensi) tenggelam. Detail env+ssId
   dipindah ke jalur `catch` — muncul justru saat `openById` gagal. Log error sendiri
-  TIDAK dibungkam. **Belum aktif di kasir**: perlu deployment baru (v90).
+  TIDAK dibungkam. **Aktif di kasir sejak v90** (29/09), tanpa perubahan URL.
 - **P3 — sudah DIUKUR, lalu ditolak.** Dugaan awal "hemat 3-5 detik/login" ternyata
   salah: tidak ada antrean request (`apiRequest` = `fetch` biasa), sehingga fetch
   pre-login berjalan paralel dan dampaknya hanya kontensi ±0,3-0,7 detik. Deduksi
@@ -148,20 +148,38 @@ di frontend, keduanya terverifikasi di halaman live.
   detik, melewati ambang 90 detik, jadi diagnosisnya tepat sasaran.
 
 Suite: 281 → 301 tes, semua hijau. 15 tes regresi baru (P1 ×5, P2 ×1, P4 ×5,
-semuanya ditulis lebih dulu dan sudah diamati gagal sebelum kodenya diubah. Assertion
+  P5 ×3, P6 ×6), semuanya ditulis lebih dulu dan sudah diamati gagal
+  sebelum kodenya diubah.
 "interval 45000 ms" yang rapuh (jendela 400 karakter) diganti membaca nilai dari
 argumen `setInterval` — tetap setektif, hanya tahan terhadap komentar tambahan.
 P6 tidak menaikkan versi: ia tidak mengubah apa yang dilihat kasir, hanya
 menambah satu peringatan console. Helper `triggerEvent` kini menerima argumen
 event opsional agar `focusin` bisa diuji di batas event yang sebenarnya.
 
-**Dua jalur distribusi sudah jauh berbeda.** Halaman POS yang dipakai kasir
-berasal dari GitHub Pages (v87, terverifikasi identik dengan file lokal),
-sedangkan route halaman Apps Script di deployment `@89` masih menyajikan
-`index.html` yang jauh lebih lama — tanpa meta `app-version`, tanpa P1/P2/P4,
-0 elemen `<th>` (lokal: 20), dan masih memuat `getPenjualanReport` yang sudah
-dihapus. Deployment `@HEAD` tidak bisa dipakai: halamannya login Google
-(`accounts.google.com/v3/signin/`), jadi kasir pasti butuh otorisasi.
+**Route halaman Apps Script tertinggal, lalu disusulkan di v90.** Halaman POS
+yang dipakai kasir berasal dari GitHub Pages (v87). Route halaman di
+deployment `@89` memang benar-benar tertinggal — P1/P2/P4 belum ada di sana.
+Tapi dua "bukti" yang sempat dipakai untuk menyimpulkan tertinggal jauh
+ternyata artefak, dan dicoret agar tidak dipakai lagi: wrapper web app Apps
+Script meng-escape `<` menjadi `\x3c` (jadi `<th` tak terlihat sama sekali)
+dan menyisipkan daftar nama fungsi server (jadi `getPenjualanReport` muncul
+sebagai `\x22getPenjualanReport\x22`). Setelah di-decape keduanya cocok dengan
+lokal, jadi yang benar-benar tertinggal hanya isi kodenya. Sejak v90 route ini
+sudah menyusul: P1/P4/P6 ada dan 20 elemen `<th>`, sama seperti lokal.
+
+Deployment `@HEAD` (`...RjJWNV`) dipastikan tidak bisa dipakai: halamannya
+login Google (`accounts.google.com/v3/signin/`), jadi kasir selalu butuh
+otorisasi.
+
+**Memperbarui deployment: `clasp deploy -i` TIDAK bisa dipakai.** Pada
+29/09 dicoba dan gagal 404 tanpa efek samping (versi 90 tidak terbentuk).
+Yang berhasil: `versions.create` lalu `deployments.update` (PUT) dengan
+`deploymentConfig` saja. `entryPoints` ditolak API saat update ("Unknown name
+`entryPoints`") — untungnya itu field baca-saja, jadi `executeAs:
+`USER_DEPLOYING`` dan `access: ANYONE_ANONYMOUS` otomatis utuh, dan URL tetap
+sama sehingga `API_URL` tidak perlu disentuh. **HATI-HATI:** `clasp deployments`
+ masih menampilkan `@89` setelah update — datanya basi. Yang benar dibaca
+dari `deployments.get`, yang mengembalikan `versionNumber: 90`.
 
 ### Perbaikan v84 — Fase 2: ikon SVG inline (FontAwesome dihapus) + fix payload riwayat
 
