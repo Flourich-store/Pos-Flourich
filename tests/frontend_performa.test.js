@@ -331,8 +331,14 @@ r.suite('Frontend — refreshData & aksi tulis memakai trueSync', () => {
     cb();
     r.assertEq(JSON.stringify(terekam), '[true,true]', 'sinkronisasi berkala = trueSync');
 
+    // Ambil nilai interval dari argumen setInterval-nya, bukan sekadar
+    // menebak dari jarak karakter: assertion versi lama memakai jendela
+    // 400 karakter sehingga langsung rapuh begitu ada satu komentar
+    // penjelasan tambahan di dalam blok setInterval.
     const src = require('fs').readFileSync(require('path').join(__dirname, '..', 'index.html'), 'utf8');
-    r.assertOk(/setInterval[\s\S]{0,400}?,\s*45000\)/.test(src), 'interval 45000 ms di index.html');
+    const m = src.match(/setInterval\([\s\S]*?,\s*(\d+)\)/);
+    r.assertOk(m, 'pola setInterval(..., <ms>) ditemukan di index.html');
+    r.assertEq(m[1], '45000', 'interval sinkronisasi 45000 ms di index.html');
   });
 });
 
@@ -442,6 +448,74 @@ r.suite('Guard isUserInteracting tidak boleh menelan update server', () => {
 
     dom.triggerEvent('document', 'visibilitychange');
     r.assertEq(jumlahProdukTerRender(app), 2, 'update tertunda dirender saat halaman terlihat lagi');
+  });
+});
+
+// ============================================================
+// Tick sinkronisasi 45 detik
+// ============================================================
+// Setelah P1, hasil refresh yang masuk saat guard interaksi menyala
+// ditahan (renderTertunda), bukan langsung tampil. Artinya request
+// berkala itu dibayar penuh (12-28 detik ke Spreadsheet) tanpa satu
+// pun byte yang sampai ke layar. Lewati saja; jangan menambah permintaan
+// lain sebagai gantinya.
+r.suite('Tick sinkronisasi 45 detik tidak membuang request sia-sia', () => {
+
+  function siapkanTick() {
+    const dom = createDomStub();
+    const app = loadFrontend(dom, RESPON_DATA);
+    app.call('startRealtimeSync');
+    const cb = dom.window.__lastIntervalCallback;
+    let dipanggil = 0;
+    let argumen = null;
+    app.set('refreshData', function (silent, trueSync) { dipanggil++; argumen = [silent, trueSync]; });
+    return { dom, app, cb, hitung: () => dipanggil, argumen: () => argumen };
+  }
+
+  r.test('tab disembunyikan: tick tidak menembak server', () => {
+    const s = siapkanTick();
+    s.dom.window.document.hidden = true;
+    s.cb();
+    r.assertEq(s.hitung(), 0, 'tidak ada request ke server saat tidak ada yang melihat layar');
+  });
+
+  r.test('kasir sedang berinteraksi: tick tidak menembak server', () => {
+    const s = siapkanTick();
+    s.app.set('isUserInteracting', true);
+    s.cb();
+    r.assertEq(s.hitung(), 0, 'tidak ada request sia-sia saat guard interaksi menyala');
+  });
+
+  r.test('kondisi normal: tick tetap menembak server dengan trueSync', () => {
+    const s = siapkanTick();
+    s.cb();
+    r.assertEq(s.hitung(), 1, 'satu request ke server');
+    r.assertEq(JSON.stringify(s.argumen()), '[true,true]', 'masih trueSync, bukan cache');
+  });
+
+  r.test('setelah interaksi selesai, tick berikutnya kembali menembak server', () => {
+    const s = siapkanTick();
+    s.app.set('isUserInteracting', true);
+    s.cb();
+    r.assertEq(s.hitung(), 0, 'ditahan selama interaksi');
+    s.app.set('isUserInteracting', false);
+    s.cb();
+    r.assertEq(s.hitung(), 1, 'kembali normal begitu interaksi selesai');
+  });
+
+  r.test('refreshData sendiri tidak pernah dilewati, hanya tick-nya', () => {
+    // Jaga-jaga: kalau penentzanya diletakkan di dalam refreshData, refresh
+    // setelah checkout / tambah stok ikut hilang dan kasir tidak pernah
+    // melihat hasil transaksinya sendiri.
+    const dom = createDomStub();
+    const app = loadFrontend(dom, RESPON_DATA);
+    dom.window.document.hidden = true;
+    app.set('isUserInteracting', true);
+    let dipanggil = 0;
+    app.set('safeGoogleRun', function () { dipanggil++; });
+    app.call('refreshData', true, true);
+    r.assertEq(dipanggil, 1,
+      'refresh setelah checkout/stok tetap menembak server walau tab tersembunyi dan guard menyala');
   });
 });
 
