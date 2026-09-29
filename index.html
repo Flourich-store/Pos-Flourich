@@ -2268,12 +2268,71 @@
     // update yang ditahan, lalu dipakai ulang begitu interaksi benar-benar
     // selesai (tidak ada timer, tidak ada tebakan).
     let renderTertunda = false;
+    // P6 - DIAGNOSIS, bukan perbaikan. Yang sudah terbukti di live adalah
+    // akibatnya (update server ditelan diam-diam), belum pemicunya. Untuk
+    // menutup sisa diagnosis di perangkat kasir yang masih bermasalah, kita
+    // butuh satu bukti: elemen apa yang masih menahan guard.
+    // Sengaja TIDAK melepas flag sendiri -- melepas tanpa bukti berarti
+    // menebak kapan interaction "cukup", dan render di tengah pengetikan
+    // bisa menimpa input kasir. Yang dilakukan hanya mencatat.
+    let interaksiMulaiAt = 0;
+    let interaksiNyangkapDilaporkan = false;
+    const AMBANG_NYANGKAP_MS = 90000;   // 2 tick sinkronisasi = 1,5 menit
     const rowsPerPage = 10;
     const isLocalMode = window.location.protocol === 'file:';
+
+    // Elemen apa yang masih memegang fokus saat guard menyala. activeElement
+    // dibaca langsung dari browser, jadi tetap benar walau flag dinyalakan
+    // lewat jalur selain focusin.
+    function deskripsiFokusAktif() {
+      const el = document.activeElement;
+      if (!el) return 'tidak ada elemen fokus';
+      const tag = el.tagName ? String(el.tagName).toLowerCase() : 'tanpa-tag';
+      const penanda = el.id ? ('#' + el.id) : (el.name ? ('[name=' + el.name + ']') : '(tanpa id)');
+      return tag + penanda;
+    }
+
+    // -1 = tidak ada catatan focusin, jadi lamanya tidak bisa ditelusuri.
+    function lamaInteraksiDetik() {
+      if (!interaksiMulaiAt) return -1;
+      return Math.round((new Date().getTime() - interaksiMulaiAt) / 1000);
+    }
+
+    // Dipanggil hanya dari tick sinkronisasi. Murni membaca state lalu menulis
+    // ke console; isUserInteracting sengaja tidak disentuh sama sekali.
+    function laporkanInteraksiNyangkap() {
+      const detik = lamaInteraksiDetik();
+      // Masih wajar (kasir genuinely sedang mengetik) -> jangan repot.
+      if (detik >= 0 && (detik * 1000) < AMBANG_NYANGKAP_MS) return;
+      if (interaksiNyangkapDilaporkan) return;   // jangan spam tiap 45 detik
+      interaksiNyangkapDilaporkan = true;
+      console.warn('[POS] guard interaksi nyangkap ' +
+        (detik >= 0 ? detik + ' detik'
+          : 'lebih dari ' + (AMBANG_NYANGKAP_MS / 1000) + ' detik (tanpa catatan focusin)') +
+        ' | elemen fokus: ' + deskripsiFokusAktif() +
+        ' | update tertahan: ' + (renderTertunda ? 'ya' : 'belum ada') +
+        ' | tick ini dilewati, tick berikutnya ambil data segar');
+    }
+
+    // Cara mengambil bukti di perangkat kasir yang bermasalah: satu perintah
+    // di console, tanpa menggulir log yang panjang. Murni membaca state.
+    function laporanInteraksiPos() {
+      return {
+        interaksiMenyala: isUserInteracting,
+        tahanDetik: lamaInteraksiDetik(),
+        fokus: deskripsiFokusAktif(),
+        updateTertahan: renderTertunda,
+        adaCatatanFocusin: interaksiMulaiAt > 0
+      };
+    }
 
     // Lepas guard interaksi, lalu varsakan update yang tadi tertahan.
     function lepasInteraksiDanVarsakanRender() {
       isUserInteracting = false;
+      // Episode nyangkap selesai -> reset pencatat waktu & latch peringatan,
+      // supaya episode berikutnya bisa dilaporkan lagi secara terpisah.
+      interaksiMulaiAt = 0;
+      interaksiNyangkapDilaporkan = false;
       if (!renderTertunda) return;   // tidak ada yang tertahan -> jangan sia-sia render
       renderTertunda = false;
       try { renderFromCache(); } catch (e) { }
@@ -2284,6 +2343,8 @@
       const tag = e.target.tagName ? e.target.tagName.toLowerCase() : '';
       if (tag === 'select' || tag === 'input' || tag === 'textarea') {
         isUserInteracting = true;
+        interaksiMulaiAt = new Date().getTime();
+        interaksiNyangkapDilaporkan = false;
       }
     });
 
@@ -2582,7 +2643,10 @@
         // Tick berikutnya (maks 45 detik lagi) mengambil data segar begitu
         // tab terlihat lagi atau interaksi selesai; jadi tidak ada data
         // yang hilang permanen, hanya satu tick yang dilewati.
-        if (document.hidden || isUserInteracting) return;
+        if (document.hidden) return;
+        // Guard menyala: lewati tick, TAPI catat dulu kalau ternyata sudah
+        // nyangkut lama (bukti elemen apa yang menahannya).
+        if (isUserInteracting) { laporkanInteraksiNyangkap(); return; }
         // Ambil data TERBARU dari server (bukan cache lama) agar stok multi-perangkat
         // tetap sinkron tanpa refresh halaman.
         refreshData(true, true);
