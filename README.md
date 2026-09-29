@@ -63,16 +63,18 @@ node tests/audit_input.test.js
   di-retry; error bisnis (stok kurang, dsb.) tampil apa adanya tanpa retry; pesan
   akhir menenangkan (transaksi belum tercatat, keranjang aman).
 
-**Antrian transaksi offline (`tests/frontend_antrian.test.js`) — 21 kasus:**
+**Antrian transaksi offline (`tests/frontend_antrian.test.js`) — 25 kasus:**
 - Jaringan putus saat checkout → transaksi masuk **antrian lokal** (localStorage,
-  maks 50), struk lokal ber-ID `FR-OFF-...` tetap tercetak, keranjang aman, dan
-  badge indikator di header menampilkan jumlah transaksi tertunda.
+  maks 50), struk digital lokal ber-ID `FR-OFF-...` LANGSUNG tampil (P7), keranjang
+  aman, dan badge indikator di header menampilkan jumlah transaksi tertunda.
 - Setiap percobaan checkout diberi `koneksiId` unik → kirim ulang memakai
   koneksiId yang **sama** → **idempotensi**: backend tidak pernah dobel-catat
   (Penjualan tetap 1 baris, stok tetap berkurang sekali).
 - Kirim ulang otomatis saat koneksi pulih (event `online`, sukses refresh data,
   login) + error bisnis saat kirim ulang dikeluarkan dari antrian (bukan loop
-  abadi); retry jaringan dibatasi 8x per item; antrian korup di-reset aman.
+  abadi); retry jaringan dibatasi 8x per item, dan item yang nyangkut permanen
+  (jaringan) TETAP tersimpan dengan status `gagal_jaringan` + peringatan (P9),
+  tidak dibuang diam-diam; antrian korup di-reset aman.
 - Backend: `prosesCheckout` menerima `koneksiId` via POST **maupun** GET; klien
   lama tanpa koneksiId tetap normal; GET tetap menolak aksi tulis.
 
@@ -90,6 +92,32 @@ node tests/audit_input.test.js
   & tidak masuk antrian offline; checkout sukses → Penjualan tercatat 1 baris,
   stok sheet tidak disentuh (stok manual); uang kurang ditolak konsisten oleh
   frontend & backend.
+
+### Perbaikan v88 — struk tidak keluar saat checkout offline (P7, P8, P9)
+
+Jalur offline (checkout jatuh ke antrian karena kegagalan jaringan/timeout) tidak pernah
+menampilkan struk sejak fitur antrian dibuat (`2f4493f`), padahal alert-nya mengklaim
+"Struk sudah dicetak". Diperbaiki beserta dua risiko terkait:
+
+- **P7 — jalur offline kini menampilkan struk digital SEKETIKA.** `window.lastReceipt`
+  sudah disiapkan tapi `showReceiptModal()` tidak pernah dipanggil, dan
+  `lastReceiptItems` tidak diisi (struk akan tampil "Item tidak tersedia"). Kini item
+  struk disalin dari keranjang sebelum dikosongkan dan `showReceiptModal()` dipanggil —
+  kasir melihat struk lokal ber-ID `FR-OFF-...` beserta catatan offline.
+- **P8 — klaim palsu "jaringan terputus / Struk sudah dicetak" dihapus.** Penyebab
+  kegagalan bisa server lambat (timeout 25 dtk) — bukan internet mati. Alert yang
+  menyesatkan dibuang; struk + catatan offline ("tersimpan aman … otomatis terkirim
+  saat koneksi pulih") adalah pemberitahuannya.
+- **P9 — transaksi tidak lagi hilang diam-diam setelah 8 percobaan.** Retry jaringan
+  yang mencapai `RETRY_MAKS_PER_ITEM` dulu menandai `gagal` lalu item DIBUANG dari
+  localStorage tanpa kabar. Kini berstatus `gagal_jaringan`: tetap tersimpan, badge
+  tetap menampilkannya (`jumlahAntrianNyangkut`), dan kasir mendapat peringatan sekali
+  saat item pertama kali nyangkut permanen. Pemicu kirim ulang otomatis tetap hanya
+  item berstatus `pending` — item `gagal_jaringan` tidak dikirim ulang (bukan loop
+  abadi). Status `gagal` (penolakan server) tetap dikeluarkan seperti sebelumnya.
+
+Suite: 301 → 305 tes, semua hijau. 6 tes baru/terubah (P7 ×1, P8 ×2, P9 ×3) ditulis
+lebih dulu dan diamati gagal (RED) sebelum kode diubah; penanda versi halaman → 88.
 
 ### Perbaikan v87 — "tabel kosong" setelah login (P1, P2, P4) + P5, diagnosis P6
 
