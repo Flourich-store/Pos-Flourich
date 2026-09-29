@@ -9,7 +9,7 @@
   <!-- Penanda versi halaman: dipakai self-check di blok script bawah untuk
        auto-reload bila browser mobile masih menyimpan HTML lama (GitHub Pages
        meng-cache 10 menit). Naikkan BERSAMAAN dengan VERSI_HTML tiap rilis. -->
-  <meta name="app-version" content="88">
+  <meta name="app-version" content="85">
 
   <link rel="icon" type="image/png" sizes="192x192"
     href="https://lh3.googleusercontent.com/d/1kbCU9E4sSQTdBylR24DFnRvsX1cAT">
@@ -1572,16 +1572,6 @@
   <!-- MOCK BACKEND untuk testing lokal -->
   <script>
     if (window.location.protocol === 'file:') {
-      // Hitung volume (ml) dari nama produk utk kolom Volume (ml) — senada
-      // dengan hitungVolumeMl() di backend.
-      function hitungVolumeMlLocal(nama) {
-        const s = String(nama || '');
-        const m = s.match(/(\d{3,4})\s*ml/i) || s.match(/\b(\d{3,4})\b/);
-        if (!m) return '';
-        const v = Number(m[1]);
-        return (v >= 100 && v <= 1999) ? v : '';
-      }
-
       const MOCK_DATA = {
         users: [
           ['admin', 'password', 'SUPER_ADMIN'],
@@ -1589,10 +1579,10 @@
           ['user', '123456', 'USER']
         ],
         products: [
-          ['1', 'Semangci 250 ml', 50, 15000, 'https://lh3.googleusercontent.com/d/1l6nzRw-zHCuSlE7tFfl1xPTFvvZZn_sU', 11250, 250],
-          ['2', 'Wonapel 250 ml', 50, 15000, 'https://lh3.googleusercontent.com/d/1l6nzRw-zHCuSlE7tFfl1xPTFvvZZn_sU', 11000, 250],
-          ['3', 'Semangci', 40, 12000, 'https://lh3.googleusercontent.com/d/1l6nzRw-zHCuSlE7tFfl1xPTFvvZZn_sU', 9000, ''],
-          ['4', 'Wonapel', 35, 14000, 'https://lh3.googleusercontent.com/d/1l6nzRw-zHCuSlE7tFfl1xPTFvvZZn_sU', 10500, '']
+          ['1', 'Semangci 250 ml', 50, 15000, 'https://lh3.googleusercontent.com/d/1l6nzRw-zHCuSlE7tFfl1xPTFvvZZn_sU'],
+          ['2', 'Wonapel 250 ml', 50, 15000, 'https://lh3.googleusercontent.com/d/1l6nzRw-zHCuSlE7tFfl1xPTFvvZZn_sU'],
+          ['3', 'Semangci', 40, 12000, 'https://lh3.googleusercontent.com/d/1l6nzRw-zHCuSlE7tFfl1xPTFvvZZn_sU'],
+          ['4', 'Wonapel', 35, 14000, 'https://lh3.googleusercontent.com/d/1l6nzRw-zHCuSlE7tFfl1xPTFvvZZn_sU']
         ],
         transactions: []
       };
@@ -1610,12 +1600,12 @@
       };
 
       google.script.run.getProdukData = function () {
-        const header = ['id', 'nama', 'stok', 'harga', 'foto_url', 'hpp'];
+        const header = ['id', 'nama', 'stok', 'harga', 'foto_url'];
         return [header, ...MOCK_DATA.products];
       };
 
       google.script.run.getPenjualanData = function () {
-        const header = ['id', 'tanggal', 'namaProduk', 'volumeMl', 'hppSatuan', 'jumlah', 'totalHarga', 'metode', 'uangDibayar', 'uangKembali', 'Modal', 'biayaOperasional', 'labaBersih'];
+        const header = ['id', 'tanggal', 'namaProduk', 'jumlah', 'totalHarga', 'metode', 'uangDibayar', 'uangKembali'];
         const transactions = JSON.parse(localStorage.getItem('mock_transactions') || '[]');
         return [header, ...transactions];
       };
@@ -1662,37 +1652,17 @@
 
         const transactions = JSON.parse(localStorage.getItem('mock_transactions') || '[]');
         cart.forEach(item => {
-          // `prod` WAJIB dideklarasikan sebelum dipakai: const punya temporal
-          // dead zone, sedangkan di bawah hppSatuan sudah mereferensikannya.
-          const prod = MOCK_DATA.products.find(p => String(p[0]) === String(item.id));
-          const hppSatuan = (item.hpp != null && Number.isFinite(Number(item.hpp)) && Number(item.hpp) > 0)
-            ? Number(item.hpp)
-            : (prod ? (Number.isFinite(Number(prod[5])) && Number(prod[5]) > 0 ? Number(prod[5]) : 0) : 0);
-          // Volume diutamakan dari kolom volume_ml (payload produk index 6),
-          // sama seperti backend. Falls back ke hitungVolumeMlLocal(nama) hanya
-          // untuk produk lama yang kolomnya belum diisi — meniru Fix 4.
-          let volumeMl = (item.volume_ml != null && item.volume_ml !== '')
-            ? Number(item.volume_ml)
-            : (prod && prod[6] != null && prod[6] !== '' ? Number(prod[6]) : '');
-          if (volumeMl === '' || !Number.isFinite(Number(volumeMl))) {
-            volumeMl = hitungVolumeMlLocal(item.nama);
-          }
-          const totalModal = hppSatuan * Number(item.jumlah || 0);
           transactions.push([
             transaksi,
             tanggal.toLocaleString('id-ID'),
             item.nama,
-            volumeMl,
-            hppSatuan,
             item.jumlah,
             item.total,
             metode,
             uangDibayar,
-            uangKembali,
-            totalModal,
-            0,
-            Number(item.total || 0) - totalModal
+            uangKembali
           ]);
+          const prod = MOCK_DATA.products.find(p => String(p[0]) === String(item.id));
           if (prod) prod[2] -= Number(item.jumlah || 0);
         });
 
@@ -1876,8 +1846,6 @@
                   <th>ID Transaksi</th>
                   <th>Tanggal / Waktu</th>
                   <th>Nama Produk</th>
-                  <th>Volume (ml)</th>
-                  <th>HPP Satuan</th>
                   <th>Qty</th>
                   <th>Total Harga</th>
                   <th>Metode</th>
@@ -1890,7 +1858,7 @@
               </thead>
               <tbody>
                 <tr>
-                  <td colspan="13" style="text-align:center; color:#94a3b8; padding: 24px;">Memuat riwayat penjualan...
+                  <td colspan="11" style="text-align:center; color:#94a3b8; padding: 24px;">Memuat riwayat penjualan...
                   </td>
                 </tr>
               </tbody>
@@ -1913,9 +1881,6 @@
   </div>
 
   <script>
-    // v89 (P1-P3 + P5). Deployment LAMA @87 sengaja tidak dipakai lagi:
-    // @87 masih menjalankan kode sebelum HPP tak terbaca ditangani.
-    // Deployment v89 sudah disetujui & dipublikasikan pemilik 28/09/2026.
     const API_URL = 'https://script.google.com/macros/s/AKfycbzNNhSQCDyaxcZ5m1_2oiPrbyUOctjthaBW7HKOYk2L6ngDIi95FEQSgED2XmBAaOihOg/exec';
 
     // ==== Ketahanan jaringan untuk semua panggilan API ====
@@ -1932,7 +1897,7 @@
     // berkurang setelah checkout" di HP: perangkat menjalankan kode tua tanpa
     // sadar. Bila versi di server lebih baru dari versi yang berjalan, muat
     // ulang SEKALI otomatis. Penanda versi = <meta name="app-version">.
-    const VERSI_HTML = 88;
+    const VERSI_HTML = 85;
     function periksaVersiHalaman() {
       try {
         if (window.location.protocol === 'file:') return; // mode lokal: tidak relevan
@@ -2163,18 +2128,11 @@
       return bacaAntrianOffline().filter(it => it && it.status === 'pending').length;
     }
 
-    // P9: transaksi yang gagal terkirim permanen (jaringan) TIDAK dibuang — tetap dihitung
-    // agar badge/peringatan tidak menutup-nutupi. (Pemicu kirim ulang otomatis tetap hanya
-    // item berstatus 'pending'.)
-    function jumlahAntrianNyangkut() {
-      return bacaAntrianOffline().filter(it => it && it.status === 'gagal_jaringan').length;
-    }
-
     function perbaruiIndikatorAntrian() {
       const badge = document.getElementById('offlineQueueBadge');
       const teks = document.getElementById('offlineQueueCount');
       if (!badge || !teks) return;
-      const jumlah = jumlahAntrianTertunda() + jumlahAntrianNyangkut();
+      const jumlah = jumlahAntrianTertunda();
       teks.textContent = String(jumlah);
       if (jumlah > 0) badge.classList.remove('hidden');
       else badge.classList.add('hidden');
@@ -2206,11 +2164,8 @@
               // Jaringan masih putus: sisakan pending, coba lagi nanti.
               item.percobaan = (item.percobaan || 0) + 1;
               if (item.percobaan >= RETRY_MAKS_PER_ITEM) {
-                // P9: gagal jaringan permanen TIDAK dibuang diam-diam. Status terpisah dari
-                // 'gagal' (bisnis) agar item tetap tersimpan dan badge/peringatan menampilkannya.
-                item.status = 'gagal_jaringan';
-                item.alasanGagal = 'Jaringan tidak pulih setelah ' + item.percobaan + ' percobaan — transaksi tetap tersimpan di perangkat ini.';
-                alert('Transaksi belum terkirim ke server setelah ' + item.percobaan + ' percobaan — transaksi tetap tersimpan aman di perangkat ini. Periksa koneksi lalu refresh halaman, atau hubungi admin.');
+                item.status = 'gagal';
+                item.alasanGagal = 'Jaringan tidak pulih setelah ' + item.percobaan + ' percobaan.';
               }
               break; // hentikan putaran ini; jadwal berikutnya melanjutkan
             }
@@ -2234,8 +2189,7 @@
           }
         }
         // Buang item yang sudah terkirim / gagal permanen.
-        // P9: item gagal_jaringan TETAP tersimpan (yang dibuang hanya success & gagal bisnis).
-        antrianSekarang = antrianSekarang.filter(it => it && (it.status === 'pending' || it.status === 'gagal_jaringan'));
+        antrianSekarang = antrianSekarang.filter(it => it && it.status === 'pending');
         simpanAntrianOffline(antrianSekarang);
       } finally {
         isMengirimAntrian = false;
@@ -2271,105 +2225,19 @@
     let currentPage = 1;
     let fetchDataHasError = false;
     let isUserInteracting = false; // Flag penanda apakah user sedang berinteraksi dengan form/dropdown
-    // Regresi nyata: flag di atas hanya dilepas oleh 'focusout'. Di HP kasir
-    // sering menekan tombol / mengunci layar tanpa memicu focusout, sehingga
-    // flag nyangkut dan renderFromCache() membuang update server berikutnya
-    // secara diam-diam — tabel produk & riwayat terlihat "kosong"/basi meski
-    // server sudah mengirim data terbaru. renderTertunda mencatat bahwa ada
-    // update yang ditahan, lalu dipakai ulang begitu interaksi benar-benar
-    // selesai (tidak ada timer, tidak ada tebakan).
-    let renderTertunda = false;
-    // P6 - DIAGNOSIS, bukan perbaikan. Yang sudah terbukti di live adalah
-    // akibatnya (update server ditelan diam-diam), belum pemicunya. Untuk
-    // menutup sisa diagnosis di perangkat kasir yang masih bermasalah, kita
-    // butuh satu bukti: elemen apa yang masih menahan guard.
-    // Sengaja TIDAK melepas flag sendiri -- melepas tanpa bukti berarti
-    // menebak kapan interaction "cukup", dan render di tengah pengetikan
-    // bisa menimpa input kasir. Yang dilakukan hanya mencatat.
-    let interaksiMulaiAt = 0;
-    let interaksiNyangkapDilaporkan = false;
-    const AMBANG_NYANGKAP_MS = 90000;   // 2 tick sinkronisasi = 1,5 menit
     const rowsPerPage = 10;
     const isLocalMode = window.location.protocol === 'file:';
-
-    // Elemen apa yang masih memegang fokus saat guard menyala. activeElement
-    // dibaca langsung dari browser, jadi tetap benar walau flag dinyalakan
-    // lewat jalur selain focusin.
-    function deskripsiFokusAktif() {
-      const el = document.activeElement;
-      if (!el) return 'tidak ada elemen fokus';
-      const tag = el.tagName ? String(el.tagName).toLowerCase() : 'tanpa-tag';
-      const penanda = el.id ? ('#' + el.id) : (el.name ? ('[name=' + el.name + ']') : '(tanpa id)');
-      return tag + penanda;
-    }
-
-    // -1 = tidak ada catatan focusin, jadi lamanya tidak bisa ditelusuri.
-    function lamaInteraksiDetik() {
-      if (!interaksiMulaiAt) return -1;
-      return Math.round((new Date().getTime() - interaksiMulaiAt) / 1000);
-    }
-
-    // Dipanggil hanya dari tick sinkronisasi. Murni membaca state lalu menulis
-    // ke console; isUserInteracting sengaja tidak disentuh sama sekali.
-    function laporkanInteraksiNyangkap() {
-      const detik = lamaInteraksiDetik();
-      // Masih wajar (kasir genuinely sedang mengetik) -> jangan repot.
-      if (detik >= 0 && (detik * 1000) < AMBANG_NYANGKAP_MS) return;
-      if (interaksiNyangkapDilaporkan) return;   // jangan spam tiap 45 detik
-      interaksiNyangkapDilaporkan = true;
-      console.warn('[POS] guard interaksi nyangkap ' +
-        (detik >= 0 ? detik + ' detik'
-          : 'lebih dari ' + (AMBANG_NYANGKAP_MS / 1000) + ' detik (tanpa catatan focusin)') +
-        ' | elemen fokus: ' + deskripsiFokusAktif() +
-        ' | update tertahan: ' + (renderTertunda ? 'ya' : 'belum ada') +
-        ' | tick ini dilewati, tick berikutnya ambil data segar');
-    }
-
-    // Cara mengambil bukti di perangkat kasir yang bermasalah: satu perintah
-    // di console, tanpa menggulir log yang panjang. Murni membaca state.
-    function laporanInteraksiPos() {
-      return {
-        interaksiMenyala: isUserInteracting,
-        tahanDetik: lamaInteraksiDetik(),
-        fokus: deskripsiFokusAktif(),
-        updateTertahan: renderTertunda,
-        adaCatatanFocusin: interaksiMulaiAt > 0
-      };
-    }
-
-    // Lepas guard interaksi, lalu varsakan update yang tadi tertahan.
-    function lepasInteraksiDanVarsakanRender() {
-      isUserInteracting = false;
-      // Episode nyangkap selesai -> reset pencatat waktu & latch peringatan,
-      // supaya episode berikutnya bisa dilaporkan lagi secara terpisah.
-      interaksiMulaiAt = 0;
-      interaksiNyangkapDilaporkan = false;
-      if (!renderTertunda) return;   // tidak ada yang tertahan -> jangan sia-sia render
-      renderTertunda = false;
-      try { renderFromCache(); } catch (e) { }
-    }
 
     // Event listener global untuk melindungi proses input & dropdown dari refresh latar belakang
     document.addEventListener('focusin', function (e) {
       const tag = e.target.tagName ? e.target.tagName.toLowerCase() : '';
       if (tag === 'select' || tag === 'input' || tag === 'textarea') {
         isUserInteracting = true;
-        interaksiMulaiAt = new Date().getTime();
-        interaksiNyangkapDilaporkan = false;
       }
     });
 
     document.addEventListener('focusout', function (e) {
-      lepasInteraksiDanVarsakanRender();
-    });
-
-    // Jaring pengaman untuk focusout yang tidak pernah datang: kasir berpindah
-    // aplikasi / mengunci layar, atau halaman di-back lalu dikembalikan.
-    window.addEventListener('blur', function () {
-      lepasInteraksiDanVarsakanRender();
-    });
-    document.addEventListener('visibilitychange', function () {
-      lepasInteraksiDanVarsakanRender();
+      isUserInteracting = false;
     });
 
     window.onload = function () {
@@ -2551,12 +2419,6 @@
           sessionStorage.setItem('pos_role', res.role);
 
           updateUserBadge(res.username, res.role);
-          // Sisa filter dari kunjungan sebelumnya (filterSearch / rentang tanggal)
-          // tidak pernah dikosongkan, sehingga applyFilter() langsung menyaring
-          // seluruh baris dan tabel riwayat tampil kosong padahal data ada.
-          // Membersihkannya di sini = satu-satunya saat kasir pasti datastore
-          // masih kosong, jadi tidak ada yang dirusak oleh penyaringan tak sengaja.
-          try { resetFilter(); } catch (e) { }
           // OPTIMASI LOGIN: respons checkLogin SEKARANG membawa dataAwal (produk +
           // penjualan terbaru) — render SEKETIKA tanpa roundtrip getInitialData
           // kedua (hemat satu overhead HTTP/cold start Apps Script, bisa belasan
@@ -2643,21 +2505,6 @@
       // (Dulu 10 detik penuh fetch 45KB -> boros kuota & sering bertabrakan dengan
       // interaksi kasir; data tetap segar karena tiap checkout/stok langsung sync.)
       realtimeTimer = setInterval(() => {
-        // Lewati tick yang pasti sia-sia (hanya untuk sinkronisasi BERKALA;
-        // refresh setelah checkout / tambah stok TIDAK lewat sini):
-        //  - tab disembunyikan: tidak ada yang melihat layar, dan browser
-        //    juga membatasi timer di tab latar belakang;
-        //  - kasir sedang berinteraksi: hasil refresh ini pasti ditahan
-        //    renderFromCache (renderTertunda) dan nol byte-nya tampil.
-        //    Membayar 12-28 detik ke Spreadsheet untuk data yang dibuang
-        //    persis masalah "kasir bayar network tanpa dapat apa-apa".
-        // Tick berikutnya (maks 45 detik lagi) mengambil data segar begitu
-        // tab terlihat lagi atau interaksi selesai; jadi tidak ada data
-        // yang hilang permanen, hanya satu tick yang dilewati.
-        if (document.hidden) return;
-        // Guard menyala: lewati tick, TAPI catat dulu kalau ternyata sudah
-        // nyangkut lama (bukti elemen apa yang menahannya).
-        if (isUserInteracting) { laporkanInteraksiNyangkap(); return; }
         // Ambil data TERBARU dari server (bukan cache lama) agar stok multi-perangkat
         // tetap sinkron tanpa refresh halaman.
         refreshData(true, true);
@@ -2838,16 +2685,11 @@
     }
 
     function renderFromCache() {
-      // Pengaman: Jangan merender ulang DOM jika user sedang aktif berinteraksi
+      // Pengaman: Jangan merender ulang DOM jika user sedang aktif berinteraksi 
       // dengan input atau dropdown (mencegah flickering/tertutup paksa di mobile)
       if (isUserInteracting) {
-        // TIDAK dibuang diam-diam: tandai supaya lepasInteraksiDanVarsakanRender()
-        // menuliskannya begitu interaksi selesai (lihat deklarasi flag di atas).
-        renderTertunda = true;
         return;
-      }
-      renderTertunda = false;
-      const cached = localStorage.getItem('pos_initial_data');
+      }        const cached = localStorage.getItem('pos_initial_data');
         if (cached) {
           try {
             const parsed = JSON.parse(cached);
@@ -2912,8 +2754,6 @@
       const sebelumnya = isUserInteracting;
       isUserInteracting = false;
       try {
-        // Render ini memang berjalan, jadi tidak ada update yang perlu ditahan.
-        renderTertunda = false;
         if (cacheJson !== undefined) {
           try {
             localStorage.setItem('pos_initial_data', JSON.stringify(cacheJson));
@@ -3126,25 +2966,12 @@
       applyFilter(true);
     }
 
-    /**
-     * Format sel rupiah di tabel Riwayat.
-     * Sel KOSONG ("") tampil "—", bukan "Rp 0": backend menulis HPP Satuan,
-     * Modal, Biaya Operasional, dan Laba Bersih kosong ketika HPP produk
-     * tak terbaca, jadi "—" berarti "tidak dihitung", bukan "nol".
-     * Angka 0 yang disengaja tetap tampil "Rp 0".
-     */
-    function formatSelKosong(row, i) {
-      const v = row[i];
-      if (v === '' || v === undefined || v === null) return '—';
-      return 'Rp ' + Number(v).toLocaleString('id-ID');
-    }
-
     function renderPenjualanTable() {
       const tbodyJual = document.querySelector('#penjualanTable tbody');
       tbodyJual.innerHTML = '';
 
       if (filteredPenjualanData.length === 0) {
-        tbodyJual.innerHTML = '<tr><td colspan="13" style="text-align:center; color:#94a3b8; padding:20px;">Tidak ada riwayat penjualan yang sesuai</td></tr>';
+        tbodyJual.innerHTML = '<tr><td colspan="11" style="text-align:center; color:#94a3b8; padding:20px;">Tidak ada riwayat penjualan yang sesuai</td></tr>';
         updatePaginationControls(0);
         return;
       }
@@ -3159,23 +2986,21 @@
       let barisHtml = '';
       for (let i = startIndex; i < endIndex; i++) {
         const row = filteredPenjualanData[i];
-        const isCash = String(row[7] || '').toUpperCase() === 'CASH';
+        const isCash = String(row[5] || '').toUpperCase() === 'CASH';
         const badgeClass = isCash ? 'badge badge-cash' : 'badge badge-qris';
 
         barisHtml += `<tr>
           <td><span style="color:var(--primary); font-weight:700;">${row[0] || ''}</span></td>
           <td>${row[1] || ''}</td>
           <td><b>${row[2] || ''}</b></td>
-          <td>${row[3] === '' || row[3] == null ? '-' : row[3]}</td>
-          <td>${formatSelKosong(row, 4)}</td>
-          <td>${row[5] || 0}</td>
-          <td><b>Rp ${Number(row[6] || 0).toLocaleString('id-ID')}</b></td>
-          <td><span class="${badgeClass}">${row[7] || '-'}</span></td>
+          <td>${row[3] || 0}</td>
+          <td><b>Rp ${Number(row[4] || 0).toLocaleString('id-ID')}</b></td>
+          <td><span class="${badgeClass}">${row[5] || '-'}</span></td>
+          <td>Rp ${Number(row[6] || 0).toLocaleString('id-ID')}</td>
+          <td>Rp ${Number(row[7] || 0).toLocaleString('id-ID')}</td>
           <td>Rp ${Number(row[8] || 0).toLocaleString('id-ID')}</td>
           <td>Rp ${Number(row[9] || 0).toLocaleString('id-ID')}</td>
-          <td>${formatSelKosong(row, 10)}</td>
-          <td>${formatSelKosong(row, 11)}</td>
-          <td><b>${formatSelKosong(row, 12)}</b></td>
+          <td><b>Rp ${Number(row[10] || 0).toLocaleString('id-ID')}</b></td>
         </tr>`;
       }
       tbodyJual.innerHTML = barisHtml;
@@ -3225,9 +3050,7 @@
         exist.jumlah += qty;
         exist.total = exist.jumlah * prod[3];
       } else {
-        // hpp dibawa dari data produk (kolom 'hpp', layout sheet BARU) supaya
-        // backend mencatat HPP Satuan + Modal + Laba persis dari sheet Produk.
-        cart.push({ id: id, nama: prod[1], jumlah: qty, total: qty * prod[3], hpp: Number(prod[5] ?? 0) });
+        cart.push({ id: id, nama: prod[1], jumlah: qty, total: qty * prod[3] });
       }
 
       renderCart();
@@ -3274,7 +3097,6 @@
               <div class="cart-item-info">
                 <div class="cart-item-name">${item.nama}</div>
                 <div class="cart-item-sub">Rp ${Number(unitPrice).toLocaleString('id-ID')} / pcs</div>
-                ${Number(item.hpp) > 0 ? '' : '<div class="cart-item-sub" style="color:#b45309;font-weight:600;">HPP tak terbaca — Modal &amp; Laba akan dicatat kosong</div>'}
               </div>
               <div class="cart-qty-ctrl">
                 <button type="button" class="btn-qty" onclick="updateCartQty(${index}, -1)">-</button>
@@ -3413,7 +3235,6 @@
             metode: metode,
             offline: true
           };
-          window.lastReceiptItems = (Array.isArray(cart) ? cart : []).map(function (it) { return { nama: it && it.nama, jumlah: it && it.jumlah, hargaPerPcs: it && it.jumlah ? (it.total / it.jumlah) : 0 }; });
           // Jaringan putus: SIMPAN ke antrian lokal — transaksi tidak boleh hilang.
           try {
             const antrian = bacaAntrianOffline();
@@ -3439,10 +3260,9 @@
             document.getElementById('kembalianBox').innerHTML = 'Uang Kembali : Rp 0';
             perbaruiIndikatorAntrian();
             jadwalkanKirimAntrianOffline(5000);
-            // P7+P8: struk digital tampil SEKETIKA dengan catatan offline. Alert lama ("Struk sudah
-            // dicetak") menyesatkan — di jalur ini struk TIDAK pernah dicetak otomatis; kini kasir
-            // benar-benar melihat struk beserta catatan sinkron otomatis.
-            showReceiptModal();
+            alert('Jaringan terputus, tapi transaksi Anda AMAN.\n\n' +
+              'ID sementara: ' + transaksiLokal + '\n' +
+              'Struk sudah dicetak. Transaksi otomatis dikirim ke server saat koneksi pulih — tidak perlu diinput ulang.');
           } catch (simpanErr) {
             console.error('Gagal menyimpan ke antrian offline:', simpanErr);
             alert('Checkout gagal: ' + msg + '\n\nTransaksi TIDAK tercatat dan keranjang masih aman — silakan tekan PROSES TRANSAKSI lagi.');
