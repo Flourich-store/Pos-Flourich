@@ -1796,4 +1796,54 @@ r.suite('Diagnostik - KOREKSI: keputusan HPP pemilik Semangsu 350 ml = 10000', (
   });
 });
 
+// ============================================================
+// P5 — getSpreadsheet tidak membanjiri log server
+// ============================================================
+// getSpreadsheet() dipanggil hampir di SETIAP aksi server (baca produk,
+// riwayat, checkout, stok, laporan). Dua Logger.log "untuk debugging" di
+// dalamnya ikut jalan di setiap panggilan, padahal nilai ENV dan ssId
+// praktis tidak pernah berubah. Akibatnya log yang benar-benar berguna
+// (HPP kosong, kolom tidak ketemu, idempotensi) drowned among baris
+// yang isinya sama persis setiap kali.
+r.suite('Backend - P5: getSpreadsheet tidak menulis log per-panggilan', () => {
+
+  r.test('jalur normal: nol baris log, spreadsheet tetap dikembalikan', () => {
+    const { gas, backend, spreadsheet } = setupBackend();
+    gas.Logger.logs.length = 0;
+
+    const ss = backend.getSpreadsheet();
+
+    r.assertEq(ss, spreadsheet, 'spreadsheet yang benar dikembalikan');
+    r.assertEq(gas.Logger.logs.length, 0,
+      'getSpreadsheet tidak boleh menulis log pada jalur normal');
+  });
+
+  r.test('20 panggilan beruntun tetap nol baris log (bukan 1 per panggilan)', () => {
+    const { gas, backend } = setupBackend();
+    gas.Logger.logs.length = 0;
+
+    for (let i = 0; i < 20; i++) backend.getSpreadsheet();
+
+    r.assertEq(gas.Logger.logs.length, 0,
+      'getSpreadsheet dipanggil sangat sering; log per-panggilan akan menimpa log penting');
+  });
+
+  r.test('jalur error tetap dicatat, dan menyebut ssId yang dicoba', () => {
+    const { gas, backend, spreadsheet } = setupBackend();
+    gas.scriptRuntime.props['ENV'] = 'production';
+    gas.scriptRuntime.props['SS_ID_PROD'] = 'ID-UJI-PROD';
+    gas.Logger.logs.length = 0;
+    gas.SpreadsheetApp.openById = function () { throw new Error('spreadsheet tidak bisa dibuka'); };
+
+    const ss = backend.getSpreadsheet();
+
+    r.assertEq(ss, spreadsheet, 'fallback getActiveSpreadsheet tetap dipakai');
+    r.assertEq(gas.Logger.logs.length, 1, 'error dicatat tepat sekali, tidak dibungkam');
+    const teks = gas.Logger.logs.join('\n');
+    r.assertIncludes(teks, 'spreadsheet tidak bisa dibuka', 'pesan error ikut tercatat');
+    r.assertIncludes(teks, 'ID-UJI-PROD',
+      'ssId yang dicoba ikut disebut di jalur error, jadi tidak ada informasi yang hilang');
+  });
+});
+
 r.run('Backend Code.js').then(ok => { process.exit(ok ? 0 : 1); });
