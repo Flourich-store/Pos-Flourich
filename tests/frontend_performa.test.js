@@ -336,4 +336,113 @@ r.suite('Frontend — refreshData & aksi tulis memakai trueSync', () => {
   });
 });
 
+r.suite('Guard isUserInteracting tidak boleh menelan update server', () => {
+
+  // Gejala nyata: "login berhasil tapi tabel produk/riwayat kosong".
+  // Penyebab: renderFromCache() return diam-diam saat isUserInteracting = true.
+  // Flag itu di-true oleh focusin di input mana pun dan hanya dilepas focusout.
+  // Kalau focusout tidak pernah datang (mis. kasir menekan tombol tanpa
+  // melepaskan fokus input, atau fokus pindah ke luar halaman), update server
+  // berikutnya — termasuk sinkronisasi 45 detik — hilang tanpa jejjak.
+
+  const RESPON_AWAL = {
+    produk: [
+      ['id', 'nama', 'stok', 'harga', 'foto_url'],
+      ['1', 'Semangci 250 ml', 50, 15000, ''],
+      ['2', 'Wonapel 250 ml', 30, 14000, ''],
+      ['3', 'Semangci 350 ml', 20, 16000, '']
+    ],
+    penjualan: [['id', 'tanggal', 'namaProduk', 'jumlah', 'totalHarga', 'metode', 'uangDibayar', 'uangKembali']],
+    timestamp: 1
+  };
+
+  const RESPON_TERBARU = {
+    produk: [
+      ['id', 'nama', 'stok', 'harga', 'foto_url'],
+      ['1', 'Semangci 250 ml', 48, 15000, '']
+    ],
+    penjualan: [['id', 'tanggal', 'namaProduk', 'jumlah', 'totalHarga', 'metode', 'uangDibayar', 'uangKembali']],
+    timestamp: 2
+  };
+
+  function jumlahProdukTerRender(app) {
+    const dp = app.get('dataProduk');
+    return Array.isArray(dp) ? dp.length : 0;
+  }
+
+  function mumpetkanSkenario() {
+    const dom = createDomStub();
+    const app = loadFrontend(dom, RESPON_AWAL);
+    dom.triggerEvent('document', 'DOMContentLoaded');
+    return { dom, app };
+  }
+
+  r.test('update yang tertahan guard dirender begitu interaksi berakhir', () => {
+    const { dom, app } = mumpetkanSkenario();
+    r.assertEq(jumlahProdukTerRender(app), 4, 'baseline: 3 produk dari data awal');
+
+    // Kasir sedang mengetik di kolom pencarian -> guard menyala
+    app.set('isUserInteracting', true);
+
+    // Server mengirim data terbaru (3 produk -> 1 produk)
+    dom.localStorage.setItem('pos_initial_data', JSON.stringify(RESPON_TERBARU));
+    app.call('renderFromCache');
+    r.assertEq(jumlahProdukTerRender(app), 4, 'guard menahan render (input kasir tidak ditimpa)');
+
+    // Kasir selesai mengetik -> focusout
+    dom.triggerEvent('document', 'focusout');
+    r.assertEq(jumlahProdukTerRender(app), 2,
+      'update yang tertahan WAJIB dirender setelah interaksi berakhir');
+  });
+
+  r.test('render yang sudah berhasil tidak menggantung render ulang data basi', () => {
+    const { dom, app } = mumpetkanSkenario();
+
+    app.set('isUserInteracting', true);
+    dom.localStorage.setItem('pos_initial_data', JSON.stringify(RESPON_TERBARU));
+    app.call('renderFromCache');            // tertahan
+
+    // Guard lepas dan render benar-benar jalan
+    app.set('isUserInteracting', false);
+    app.call('renderFromCache');
+    r.assertEq(jumlahProdukTerRender(app), 2, 'data terbaru terender');
+
+    // Cache berubah lagi setelahnya; focusout tidak boleh menarik data lama
+    dom.localStorage.setItem('pos_initial_data', JSON.stringify(RESPON_AWAL));
+    dom.triggerEvent('document', 'focusout');
+    r.assertEq(jumlahProdukTerRender(app), 2,
+      'focusout tidak boleh merender data usang yang sudah tertinggal di cache');
+  });
+
+  r.test('focusout tanpa update tertunda tidak mengubah apa pun (tidak rendering sia-sia)', () => {
+    const { dom, app } = mumpetkanSkenario();
+    dom.triggerEvent('document', 'focusout');
+    r.assertEq(jumlahProdukTerRender(app), 4, 'data tetap sama, tidak ada efek samping');
+  });
+
+  r.test('update tertahan tetap dirender saat kasir berpindah aplikasi (window blur)', () => {
+    // Di HP, kasir sering mengunci layar atau pindah ke WhatsApp tanpa
+    // memicu focusout -> flag nyangkut dan update hilang sampai reload.
+    const { dom, app } = mumpetkanSkenario();
+    app.set('isUserInteracting', true);
+    dom.localStorage.setItem('pos_initial_data', JSON.stringify(RESPON_TERBARU));
+    app.call('renderFromCache');
+    r.assertEq(jumlahProdukTerRender(app), 4, 'masih tertahan');
+
+    dom.triggerEvent('window', 'blur');
+    r.assertEq(jumlahProdukTerRender(app), 2, 'update tertahan dirender saat aplikasi ditinggalkan');
+  });
+
+  r.test('update tertahan tetap dirender saat halaman dikembalikan ke depan', () => {
+    const { dom, app } = mumpetkanSkenario();
+    app.set('isUserInteracting', true);
+    dom.localStorage.setItem('pos_initial_data', JSON.stringify(RESPON_TERBARU));
+    app.call('renderFromCache');
+    r.assertEq(jumlahProdukTerRender(app), 4, 'masih tertahan');
+
+    dom.triggerEvent('document', 'visibilitychange');
+    r.assertEq(jumlahProdukTerRender(app), 2, 'update tertunda dirender saat halaman terlihat lagi');
+  });
+});
+
 r.run('Performa Checkout & Refresh').then(ok => { process.exit(ok ? 0 : 1); });
