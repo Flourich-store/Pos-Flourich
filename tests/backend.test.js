@@ -1916,6 +1916,16 @@ r.suite('Backend — cache baca getInitialData (v89)', () => {
     r.assertEq(gagal.status, false, 'kredensial salah tetap ditolak');
   });
 
+  r.test('ping: probe ringan tanpa menyentuh spreadsheet (untuk halaman status)', () => {
+    const { gas, backend } = setup();
+    // Tanpa spreadsheet aktif sekalipun, ping harus tetap sukses.
+    gas.scriptRuntime.activeSpreadsheet = null;
+    const res = backend.eksekusiAksi({ action: 'ping', args: [] });
+    r.assertEq(res.status, 'success', 'ping sukses tanpa sheet');
+    r.assertEq(res.pong, true, 'pong bernilai true');
+    r.assertOk(typeof res.waktu === 'number' && res.waktu > 0, 'waktu (timestamp) terisi');
+  });
+
 });
 
 r.run('Backend Code.js').then(ok => { process.exit(ok ? 0 : 1); });

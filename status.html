@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Status Server — Flourich POS</title>
+<meta name="app-version" content="1">
+<style>
+  :root {
+    --bg: #f1f5f4; --card: #ffffff; --ink: #0f2a24; --muted: #5b6b66;
+    --ok: #16a34a; --lambat: #d97706; --buruk: #dc2626; --garis: #dbe5e1;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #0c1613; --card: #132320; --ink: #e6efec; --muted: #8aa39b; --garis: #223833; }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 24px 16px; background: var(--bg); color: var(--ink);
+    font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+    min-height: 100vh;
+  }
+  .wrap { max-width: 760px; margin: 0 auto; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 18px; }
+  .kartu {
+    background: var(--card); border: 1px solid var(--garis); border-radius: 14px;
+    padding: 16px; margin-bottom: 14px;
+  }
+  .baris-endpoint {
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    padding: 10px 0; border-bottom: 1px solid var(--garis);
+  }
+  .baris-endpoint:last-child { border-bottom: none; }
+  .dot { width: 12px; height: 12px; border-radius: 50%; background: #94a3b8; flex: none; }
+  .dot.ok { background: var(--ok); box-shadow: 0 0 0 4px rgba(22,163,74,.15); }
+  .dot.lambat { background: var(--lambat); box-shadow: 0 0 0 4px rgba(217,119,6,.15); }
+  .dot.buruk { background: var(--buruk); box-shadow: 0 0 0 4px rgba(220,38,38,.15); }
+  .nama { font-weight: 700; font-size: 14px; }
+  .ket { color: var(--muted); font-size: 12px; }
+  .nilai { margin-left: auto; font-variant-numeric: tabular-nums; font-weight: 700; font-size: 15px; }
+  .nilai.ok { color: var(--ok); } .nilai.lambat { color: var(--lambat); } .nilai.buruk { color: var(--buruk); }
+  .kesimpulan { font-size: 15px; font-weight: 700; display: flex; align-items: center; gap: 10px; }
+  .kesimpulan .dot { width: 14px; height: 14px; }
+  .sar { color: var(--muted); font-size: 13px; margin-top: 6px; line-height: 1.5; }
+  .spark { width: 100%; height: 46px; margin-top: 8px; }
+  .riwayat { display: flex; gap: 3px; align-items: flex-end; height: 46px; margin-top: 8px; }
+  .riwayat span { flex: 1; background: var(--ok); border-radius: 2px 2px 0 0; min-height: 3px; opacity: .85; }
+  .riwayat span.lambat { background: var(--lambat); }
+  .riwayat span.buruk { background: var(--buruk); }
+  .footer { color: var(--muted); font-size: 12px; text-align: center; margin-top: 16px; line-height: 1.6; }
+  .footer a { color: inherit; }
+  .batang-jalankan { display: flex; gap: 8px; flex-wrap: wrap; }
+  button {
+    border: 1px solid var(--garis); background: transparent; color: var(--ink);
+    padding: 8px 14px; border-radius: 10px; font-size: 13px; font-weight: 600; cursor: pointer;
+  }
+  button:active { transform: translateY(1px); }
+  .auto { color: var(--muted); font-size: 12px; margin-left: auto; align-self: center; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Status Server — Flourich POS</h1>
+  <div class="sub">Pemantauan latency endpoint Google Apps Script — probe ringan tanpa menyentuh data spreadsheet.</div>
+
+  <div class="kartu">
+    <div class="kesimpulan"><span class="dot" id="dotKesimpulan"></span><span id="teksKesimpulan">Memeriksa…</span></div>
+    <div class="sar" id="sarKesimpulan">Mengukur jalan pulang-pergi ke tiap endpoint…</div>
+  </div>
+
+  <div class="kartu">
+    <div class="baris-endpoint">
+      <span class="dot" id="dotUtama"></span>
+      <div><div class="nama">Endpoint Utama</div><div class="ket">dipakai kasir (API_URL)</div></div>
+      <span class="nilai" id="nilaiUtama">—</span>
+    </div>
+    <canvas class="spark" id="sparkUtama"></canvas>
+    <div class="baris-endpoint">
+      <span class="dot" id="dotCadangan"></span>
+      <div><div class="nama">Endpoint Cadangan</div><div class="ket">failover otomatis (API_URL_CADANGAN)</div></div>
+      <span class="nilai" id="nilaiCadangan">—</span>
+    </div>
+    <canvas class="spark" id="sparkCadangan"></canvas>
+  </div>
+
+  <div class="kartu">
+    <div class="batang-jalankan">
+      <button type="button" id="btnCek">Cek Sekarang</button>
+      <span class="auto" id="infoAuto">Pemeriksaan otomatis tiap 60 detik</span>
+    </div>
+  </div>
+
+  <div class="footer">
+    Ambang: hijau &lt; 3 dtk · kuning 3–8 dtk · merah &gt; 8 dtk atau gagal.<br>
+    Kedua endpoint merah bersamaan = Google sedang macet global (bukan aplikasi) — tunggu beberapa menit, transaksi tetap aman lewat antrian offline.<br>
+    <a href="./">← Kembali ke aplikasi POS</a>
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  var ENDPOINT_UTAMA = 'https://script.google.com/macros/s/AKfycbyQlMrQNdoXrfT63Q1Y_m1lRiB10mJ35tAKbq26y4WaFNXqhbImM4zZF4eYgd64DaDxaw/exec';
+  var ENDPOINT_CADANGAN = 'https://script.google.com/macros/s/AKfycbzrk5JhtfITPCCPVacMGFwR1kToA7FvCzg673vyHXxGnC7-5OqdkWnLdYUQ4dDOJiaTtw/exec';
+
+  var AMBANG_LAMBAT_MS = 3000;  // >= ini -> kuning
+  var AMBANG_BURUK_MS = 8000;   // >= ini -> merah
+  var TIMEOUT_MS = 20000;
+  var RIWAYAT_MAKS = 40;        // jumlah batang riwayat per endpoint
+
+  var riwayatUtama = [];
+  var riwayatCadangan = [];
+  var sedangCek = false;
+  var timerAuto = null;
+
+  function klasifikasi(ms, gagal) {
+    if (gagal) return 'buruk';
+    if (ms >= AMBANG_BURUK_MS) return 'buruk';
+    if (ms >= AMBANG_LAMBAT_MS) return 'lambat';
+    return 'ok';
+  }
+
+  function probe(endpoint) {
+    var t0 = Date.now();
+    return fetch(endpoint + '?_cb=' + Date.now(), {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8', 'Accept': 'application/json' },
+      body: JSON.stringify({ action: 'ping', args: [] })
+    }).then(function (r) {
+      return r.text().then(function (t) {
+        var ms = Date.now() - t0;
+        var json = !!t && t.trim().charAt(0) !== '<';
+        var ok = false;
+        if (json) {
+          try { ok = !!(JSON.parse(t).data || JSON.parse(t)).pong; } catch (e) { ok = false; }
+        }
+        return { ms: ms, ok: ok && json };
+      });
+    }).catch(function () {
+      return { ms: Date.now() - t0, ok: false };
+    });
+  }
+
+  function denganTimeout(p, ms) {
+    return Promise.race([
+      p,
+      new Promise(function (res) { setTimeout(function () { res({ ms: ms, ok: false }); }, ms); })
+    ]);
+  }
+
+  function gambarSpark(canvas, data) {
+    var ctx = canvas.getContext('2d');
+    var w = canvas.width = canvas.offsetWidth * (window.devicePixelRatio || 1);
+    var h = canvas.height = canvas.offsetHeight * (window.devicePixelRatio || 1);
+    ctx.clearRect(0, 0, w, h);
+    if (!data.length) return;
+    var maks = Math.max.apply(null, data.map(function (d) { return d.ms; }).concat([1000]));
+    var bw = w / RIWAYAT_MAKS;
+    var awal = RIWAYAT_MAKS - data.length;
+    var warna = { ok: '#16a34a', lambat: '#d97706', buruk: '#dc2626' };
+    data.forEach(function (d, i) {
+      var tinggi = Math.max(3, (d.ms / maks) * (h - 6));
+      ctx.fillStyle = warna[d.kelas] || '#94a3b8';
+      ctx.fillRect((awal + i) * bw + 1, h - tinggi, Math.max(2, bw - 2), tinggi);
+    });
+  }
+
+  function terapkan(id, hasil) {
+    var dot = document.getElementById('dot' + id);
+    var nilai = document.getElementById('nilai' + id);
+    var kelas = klasifikasi(hasil.ms, !hasil.ok);
+    dot.className = 'dot ' + kelas;
+    nilai.className = 'nilai ' + kelas;
+    nilai.textContent = hasil.ok ? (hasil.ms >= 1000 ? (hasil.ms / 1000).toFixed(1) + ' dtk' : hasil.ms + ' ms') : 'GAGAL';
+    return kelas;
+  }
+
+  function perbaruiKesimpulan(kelasUtama, kelasCadangan) {
+    var dot = document.getElementById('dotKesimpulan');
+    var teks = document.getElementById('teksKesimpulan');
+    var sar = document.getElementById('sarKesimpulan');
+
+    if (kelasUtama === 'buruk' && kelasCadangan === 'buruk') {
+      dot.className = 'dot buruk';
+      teks.textContent = 'Google sedang macet global';
+      sar.textContent = 'Kedua endpoint sama-sama lambat/gagal — ini masalah di infrastruktur Google (routing), bukan aplikasi POS. Tunggu beberapa menit; kasir tetap bisa mencatat transaksi (masuk antrian offline otomatis dan terkirim sendiri saat pulih).';
+    } else if (kelasUtama === 'buruk') {
+      dot.className = 'dot lambat';
+      teks.textContent = 'Endpoint utama lambat — failover aktif';
+      sar.textContent = 'Aplikasi POS otomatis mengarahkan pembacaan data ke endpoint cadangan. Transaksi (tulis) tetap lewat endpoint utama dan akan berhasil begitu rute membaik.';
+    } else if (kelasUtama === 'lambat' || kelasCadangan === 'lambat') {
+      dot.className = 'dot lambat';
+      teks.textContent = 'Lambat tapi berjalan';
+      sar.textContent = 'Ada keterlambatan routing Google. Login & muat data tetap berhasil; login paralel dua endpoint memastikan waktu tunggu = rute tercepat.';
+    } else {
+      dot.className = 'dot ok';
+      teks.textContent = 'Semua normal';
+      sar.textContent = 'Kedua endpoint merespons cepat. Login, muat data, dan transaksi berjalan normal.';
+    }
+  }
+
+  function cekSekarang() {
+    if (sedangCek) return;
+    sedangCek = true;
+    var btn = document.getElementById('btnCek');
+    btn.textContent = 'Memeriksa…';
+
+    var pU = denganTimeout(probe(ENDPOINT_UTAMA), TIMEOUT_MS);
+    var pC = denganTimeout(probe(ENDPOINT_CADANGAN), TIMEOUT_MS);
+
+    Promise.all([pU, pC]).then(function (h) {
+      var kelasUtama = terapkan('Utama', h[0]);
+      var kelasCadangan = terapkan('Cadangan', h[1]);
+
+      riwayatUtama.push({ ms: h[0].ms, kelas: kelasUtama });
+      riwayatCadangan.push({ ms: h[1].ms, kelas: kelasCadangan });
+      if (riwayatUtama.length > RIWAYAT_MAKS) riwayatUtama.shift();
+      if (riwayatCadangan.length > RIWAYAT_MAKS) riwayatCadangan.shift();
+      gambarSpark(document.getElementById('sparkUtama'), riwayatUtama);
+      gambarSpark(document.getElementById('sparkCadangan'), riwayatCadangan);
+
+      perbaruiKesimpulan(kelasUtama, kelasCadangan);
+
+      sedangCek = false;
+      btn.textContent = 'Cek Sekarang';
+    });
+  }
+
+  document.getElementById('btnCek').addEventListener('click', cekSekarang);
+  window.addEventListener('resize', function () {
+    gambarSpark(document.getElementById('sparkUtama'), riwayatUtama);
+    gambarSpark(document.getElementById('sparkCadangan'), riwayatCadangan);
+  });
+
+  cekSekarang();
+  timerAuto = setInterval(cekSekarang, 60000); // tiap menit
+})();
+</script>
+</body>
+</html>

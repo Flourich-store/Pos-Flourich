@@ -72,7 +72,13 @@ function eksekusiAksi(requestData) {
   }
 
   let result;
-  if (action === 'getInitialData') {
+  if (action === 'ping') {
+    // Probe latensi paling ringan: TANPA menyentuh spreadsheet sama sekali —
+    // murni mengukur jalan pulang-pergi HTTP + eksekusi skrip. Dipakai halaman
+    // status untuk memantau kapan Google sedang lambat (routing internal),
+    // terpisah dari beban data aplikasi.
+    result = ping();
+  } else if (action === 'getInitialData') {
     // Baca berulang (login/sinkron berkala multi-perangkat) memakai cache 60 dtk;
     // dibuang paksa setiap aksi tulis (lihat buangCacheAwal).
     result = getInitialDataBerCache.apply(null, args);
@@ -163,6 +169,19 @@ function doPost(e) {
     }))
       .setMimeType(ContentService.MimeType.JSON);
   }
+}
+
+/**
+ * Probe kesehatan paling ringan untuk halaman status: tidak membaca/menulis
+ * sheet, tidak menyentuh kuota data — cukup untuk mengukur latency jalan
+ * pulang-pergi ke endpoint (yang dominan ditentukan routing Google).
+ */
+function ping() {
+  return {
+    status: 'success',
+    pong: true,
+    waktu: new Date().getTime()
+  };
 }
 
 /**
