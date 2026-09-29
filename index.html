@@ -2260,8 +2260,24 @@
     let currentPage = 1;
     let fetchDataHasError = false;
     let isUserInteracting = false; // Flag penanda apakah user sedang berinteraksi dengan form/dropdown
+    // Regresi nyata: flag di atas hanya dilepas oleh 'focusout'. Di HP kasir
+    // sering menekan tombol / mengunci layar tanpa memicu focusout, sehingga
+    // flag nyangkut dan renderFromCache() membuang update server berikutnya
+    // secara diam-diam — tabel produk & riwayat terlihat "kosong"/basi meski
+    // server sudah mengirim data terbaru. renderTertunda mencatat bahwa ada
+    // update yang ditahan, lalu dipakai ulang begitu interaksi benar-benar
+    // selesai (tidak ada timer, tidak ada tebakan).
+    let renderTertunda = false;
     const rowsPerPage = 10;
     const isLocalMode = window.location.protocol === 'file:';
+
+    // Lepas guard interaksi, lalu varsakan update yang tadi tertahan.
+    function lepasInteraksiDanVarsakanRender() {
+      isUserInteracting = false;
+      if (!renderTertunda) return;   // tidak ada yang tertahan -> jangan sia-sia render
+      renderTertunda = false;
+      try { renderFromCache(); } catch (e) { }
+    }
 
     // Event listener global untuk melindungi proses input & dropdown dari refresh latar belakang
     document.addEventListener('focusin', function (e) {
@@ -2272,7 +2288,16 @@
     });
 
     document.addEventListener('focusout', function (e) {
-      isUserInteracting = false;
+      lepasInteraksiDanVarsakanRender();
+    });
+
+    // Jaring pengaman untuk focusout yang tidak pernah datang: kasir berpindah
+    // aplikasi / mengunci layar, atau halaman di-back lalu dikembalikan.
+    window.addEventListener('blur', function () {
+      lepasInteraksiDanVarsakanRender();
+    });
+    document.addEventListener('visibilitychange', function () {
+      lepasInteraksiDanVarsakanRender();
     });
 
     window.onload = function () {
@@ -2454,6 +2479,12 @@
           sessionStorage.setItem('pos_role', res.role);
 
           updateUserBadge(res.username, res.role);
+          // Sisa filter dari kunjungan sebelumnya (filterSearch / rentang tanggal)
+          // tidak pernah dikosongkan, sehingga applyFilter() langsung menyaring
+          // seluruh baris dan tabel riwayat tampil kosong padahal data ada.
+          // Membersihkannya di sini = satu-satunya saat kasir pasti datastore
+          // masih kosong, jadi tidak ada yang dirusak oleh penyaringan tak sengaja.
+          try { resetFilter(); } catch (e) { }
           // OPTIMASI LOGIN: respons checkLogin SEKARANG membawa dataAwal (produk +
           // penjualan terbaru) — render SEKETIKA tanpa roundtrip getInitialData
           // kedua (hemat satu overhead HTTP/cold start Apps Script, bisa belasan
@@ -2720,11 +2751,16 @@
     }
 
     function renderFromCache() {
-      // Pengaman: Jangan merender ulang DOM jika user sedang aktif berinteraksi 
+      // Pengaman: Jangan merender ulang DOM jika user sedang aktif berinteraksi
       // dengan input atau dropdown (mencegah flickering/tertutup paksa di mobile)
       if (isUserInteracting) {
+        // TIDAK dibuang diam-diam: tandai supaya lepasInteraksiDanVarsakanRender()
+        // menuliskannya begitu interaksi selesai (lihat deklarasi flag di atas).
+        renderTertunda = true;
         return;
-      }        const cached = localStorage.getItem('pos_initial_data');
+      }
+      renderTertunda = false;
+      const cached = localStorage.getItem('pos_initial_data');
         if (cached) {
           try {
             const parsed = JSON.parse(cached);
@@ -2789,6 +2825,8 @@
       const sebelumnya = isUserInteracting;
       isUserInteracting = false;
       try {
+        // Render ini memang berjalan, jadi tidak ada update yang perlu ditahan.
+        renderTertunda = false;
         if (cacheJson !== undefined) {
           try {
             localStorage.setItem('pos_initial_data', JSON.stringify(cacheJson));
