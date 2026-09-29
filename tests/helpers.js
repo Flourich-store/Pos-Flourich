@@ -298,6 +298,9 @@ function loadBackend(gas) {
     selaraskanNamaProduk: sandbox.selaraskanNamaProduk,
     isiVolumeMlProduk: sandbox.isiVolumeMlProduk,
     ujiStagingPenjualan: sandbox.ujiStagingPenjualan,
+    // Pembuka spreadsheet dipanggil hampir di setiap aksi server, jadi
+    // perlu bisa diuji sendiri (terutama perilaku log-nya).
+    getSpreadsheet: sandbox.getSpreadsheet,
     _kunciProduk: sandbox._kunciProduk,
     ALIAS_PRODUK: sandbox.ALIAS_PRODUK,
     __sandbox: sandbox
