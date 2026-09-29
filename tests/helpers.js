@@ -552,8 +552,10 @@ function createDomStub() {
     consoleLogs,
     localStorage,
     sessionStorage,
-    triggerEvent: (scope, type) => {
-      (listeners[scope + ':' + type] || []).forEach(fn => fn());
+    // evt opsional: beberapa listener production memakai e.target (mis. focusin).
+    // Tanpa argumen, pemanggil lama tetap berperilaku seperti sebelumnya.
+    triggerEvent: (scope, type, evt) => {
+      (listeners[scope + ':' + type] || []).forEach(fn => fn(evt));
     }
   };
 }
