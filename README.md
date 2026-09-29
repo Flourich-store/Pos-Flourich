@@ -119,6 +119,29 @@ menampilkan struk sejak fitur antrian dibuat (`2f4493f`), padahal alert-nya meng
 Suite: 301 → 305 tes, semua hijau. 6 tes baru/terubah (P7 ×1, P8 ×2, P9 ×3) ditulis
 lebih dulu dan diamati gagal (RED) sebelum kode diubah; penanda versi halaman → 88.
 
+### Struktur sheet Penjualan: 13 kolom — Volume (ml) & HPP Satuan (v88+)
+
+Pemilik merestrukturisasi sheet **Penjualan** menjadi **13 kolom**: `ID Transaksi,
+Tanggal, Nama Produk, Volume (ml), HPP Satuan, Jumlah, Total Harga, Metode
+Pembayaran, Uang Dibayar, Uang Kembali, Modal, Biaya Operasional, Laba bersih` —
+dua kolom baru disisip setelah Nama Produk sehingga SEMUA kolom setelahnyaergeser 2 posisi. Sheet **Produk** juga bertambah kolom **HPP** (kolom F).
+
+Dampak akar-masalah yang diperbaiki: dengan kode lama (posisi tetap), kolom
+"Metode" di UI menampilkan **angka 1/2/3** — itu sebenarnya isi kolom *Jumlah*
+yang bergeser. Kini:
+
+- Posisi kolom **dibaca dari header nyata sheet** (mapping by-name, bukan
+  by-index) — kalau kolom disisip/digeser lagi, kode tidak salah posisi.
+- `prosesCheckout` menulis **13 kolom**: Volume (ml) diturunkan otomatis dari
+  nama produk ("Semangci 500 ml" → 500), HPP Satuan dari kolom HPP sheet Produk
+  (dibawa frontend lewat payload produk kolom `hpp`), Modal = HPP × qty,
+  Laba = Total − Modal − Biaya Operasional.
+- Payload `getInitialData` & tabel Riwayat di UI kini **13 kolom** senada sheet.
+- Baris historis lama (pra-migrasi) yang kolom Volume/HPP-nya kosong ditampilkan
+  "–"/Rp 0, bukan error.
+- `diagnostikPenjualan()` (GET, read-only) tersedia untuk memeriksa struktur
+  sheet kapan pun tanpa menyentuh data.
+
 ### Perbaikan v87 — "tabel kosong" setelah login (P1, P2, P4) + P5, diagnosis P6
 
 Akar masalah "login sukses tapi tabel produk/riwayat kosong" terbukti DUA, keduanya
