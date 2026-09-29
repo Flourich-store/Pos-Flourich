@@ -9,7 +9,7 @@
   <!-- Penanda versi halaman: dipakai self-check di blok script bawah untuk
        auto-reload bila browser mobile masih menyimpan HTML lama (GitHub Pages
        meng-cache 10 menit). Naikkan BERSAMAAN dengan VERSI_HTML tiap rilis. -->
-  <meta name="app-version" content="88">
+  <meta name="app-version" content="89">
 
   <link rel="icon" type="image/png" sizes="192x192"
     href="https://lh3.googleusercontent.com/d/1kbCU9E4sSQTdBylR24DFnRvsX1cAT">
@@ -1917,6 +1917,29 @@
     // @87 masih menjalankan kode sebelum HPP tak terbaca ditangani.
     // Deployment v89 sudah disetujui & dipublikasikan pemilik 28/09/2026.
     const API_URL = 'https://script.google.com/macros/s/AKfycbyQlMrQNdoXrfT63Q1Y_m1lRiB10mJ35tAKbq26y4WaFNXqhbImM4zZF4eYgd64DaDxaw/exec';
+    // Endpoint CADANGAN (deployment lain dari script yang SAMA, spreadsheet yang
+    // sama). Terukur live: saat endpoint utama dilayani 13-34 detik (routing
+    // Google yang lambat) endpoint cadangan bertahan 4-8 detik untuk beban yang
+    // identik. Dipakai OTOMATIS hanya saat endpoint utama terbukti membalas
+    // halaman HTML error Google (bukan JSON) berulang — tanpa request tambahan.
+    const API_URL_CADANGAN = 'https://script.google.com/macros/s/AKfycbyQlMrQNdoXrfT63Q1Y_m1lRiB10mJ35tAKbq26y4WaFNXqhbImM4zZF4eYgd64DaDxaw/exec';
+    const KUNCI_HTML_GAGAL = 'pos_api_html_gagal';
+    function bacaHtmlGagal() {
+      try { return Number(localStorage.getItem(KUNCI_HTML_GAGAL)) || 0; } catch (e) { return 0; }
+    }
+    function catatHtmlGagal() {
+      try { localStorage.setItem(KUNCI_HTML_GAGAL, String(Math.min(bacaHtmlGagal() + 1, 99))); } catch (e) { }
+    }
+    function resetHtmlGagal() {
+      try { localStorage.setItem(KUNCI_HTML_GAGAL, '0'); } catch (e) { }
+    }
+    // Endpoint awal untuk aksi BACA: bila endpoint utama sudah >=2x membalas
+    // HTML error (tersimpan lintas kunjungan), coba endpoint cadangan lebih dulu.
+    // Aksi TULIS TETAP di endpoint utama — kegagalan tulis harus terlihat kasir.
+    function endpointAwalAksi(action) {
+      if (API_URL_CADANGAN && bacaHtmlGagal() >= 2 && AKSI_BACA_LEWAT_GET[action]) return API_URL_CADANGAN;
+      return API_URL;
+    }
 
     // ==== Ketahanan jaringan untuk semua panggilan API ====
     // Kasus nyata: POST ke web app bisa gagal sesaat ("Failed to fetch") karena
@@ -1932,7 +1955,7 @@
     // berkurang setelah checkout" di HP: perangkat menjalankan kode tua tanpa
     // sadar. Bila versi di server lebih baru dari versi yang berjalan, muat
     // ulang SEKALI otomatis. Penanda versi = <meta name="app-version">.
-    const VERSI_HTML = 88;
+    const VERSI_HTML = 89;
     function periksaVersiHalaman() {
       try {
         if (window.location.protocol === 'file:') return; // mode lokal: tidak relevan
@@ -2007,6 +2030,9 @@
       // timeout & jumlah percobaan bisa dipendekkan tanpa mengubah perilaku aksi lain.
       const batasWaktu = opsi.timeoutMs || API_TIMEOUT_MS; // v81: BENAR-BENAR dipakai (bug lama: dihitung tapi tidak diteruskan ke fetch)
       const RETRY_MAKS_AKSI = opsi.retryMaks || API_RETRY_MAKS;
+      // Endpoint aktif untuk aksi ini: baca boleh mulai dari endpoint cadangan
+      // bila utama terbukti membalas HTML error berulang (lihat endpointAwalAksi).
+      let endpoint = endpointAwalAksi(action);
 
       // Cache pendek (3 detik) untuk aksi BACA berulang: sync 10 detik dari banyak
       // perangkat + refresh setelah aksi menulis bisa menumpuk request getInitialData
@@ -2041,8 +2067,8 @@
           // Cache-buster pada query: mencegah browser/intermediary memakai redirect
           // (exec -> echo) yang di-cache — sumber 404 berulang saat jaringan Google
           // berubah-ubah. Param tak dikenal diabaikan backend.
-          const penghalusCache = (API_URL.indexOf('?') === -1 ? '?' : '&') + '_cb=' + Date.now() + '-' + percobaan;
-          const response = await fetchDenganTimeout(API_URL + penghalusCache, {
+          const penghalusCache = (endpoint.indexOf('?') === -1 ? '?' : '&') + '_cb=' + Date.now() + '-' + percobaan;
+          const response = await fetchDenganTimeout(endpoint + penghalusCache, {
             method: 'POST',
             batasMs: batasWaktu,
             headers: {
@@ -2094,6 +2120,7 @@
           if (isBaca) {
             try { sessionStorage.setItem('pos_api_cache_' + kunciCache, JSON.stringify({ t: Date.now(), v: payload.data !== undefined ? payload.data : payload })); } catch (e) { }
           }
+          resetHtmlGagal(); // endpoint hidup normal — hapus catatan HTML error
           return payload.data !== undefined ? payload.data : payload;
         } catch (error) {
           if (error && error.__bisnis) {
@@ -2105,6 +2132,13 @@
             throw error instanceof Error ? error : new Error(String(error && error.message || error));
           }
           kegagalanTerakhir = error;
+          // Endpoint membalas HTML error Google / jaringan gagal: catat, lalu
+          // pindah ke endpoint cadangan untuk percobaan berikutnya (aksi baca;
+          // aksi tulis tetap di endpoint utama agar kegagalannya terlihat kasir).
+          catatHtmlGagal();
+          if (API_URL_CADANGAN && AKSI_BACA_LEWAT_GET[action]) {
+            endpoint = (endpoint === API_URL) ? API_URL_CADANGAN : API_URL;
+          }
           console.warn('[POS API] percobaan ' + percobaan + '/' + RETRY_MAKS_AKSI + ' gagal:', error && (error.message || error));
           if (error && error.__langsungGet) break; // jalur POST jelas bermasalah -> langsung fallback GET
           if (percobaan < RETRY_MAKS_AKSI) {
@@ -2119,7 +2153,7 @@
         try {
           console.warn('[POS API] fallback ke GET untuk', action);
           const argsUntukUrl = (action === 'getInitialData') ? [60] : args;
-          const urlGet = API_URL + '?action=' + encodeURIComponent(action) + '&args=' + encodeURIComponent(JSON.stringify(Array.isArray(argsUntukUrl) ? argsUntukUrl : [argsUntukUrl])) + (koneksiId ? '&koneksiId=' + encodeURIComponent(koneksiId) : '') + '&_cb=' + Date.now();
+          const urlGet = endpoint + '?action=' + encodeURIComponent(action) + '&args=' + encodeURIComponent(JSON.stringify(Array.isArray(argsUntukUrl) ? argsUntukUrl : [argsUntukUrl])) + (koneksiId ? '&koneksiId=' + encodeURIComponent(koneksiId) : '') + '&_cb=' + Date.now();
           const response = await fetchDenganTimeout(urlGet, { method: 'GET', headers: { 'Accept': 'application/json' }, batasMs: batasWaktu });
           const text = await response.text();
           if (!text || String(text).trim().charAt(0) === '<') {
@@ -2129,6 +2163,7 @@
           if (payload.status === 'error') {
             throw new Error(payload.message || 'Permintaan ke server gagal.');
           }
+          resetHtmlGagal(); // fallback GET sukses — endpoint aktif sehat
           console.log('[POS API] fallback GET sukses untuk', action);
           return payload.data !== undefined ? payload.data : payload;
         } catch (errGet) {

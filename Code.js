@@ -73,7 +73,11 @@ function eksekusiAksi(requestData) {
 
   let result;
   if (action === 'getInitialData') {
-    result = getInitialData.apply(null, args);
+    // Baca berulang (login/sinkron berkala multi-perangkat) memakai cache 60 dtk;
+    // dibuang paksa setiap aksi tulis (lihat buangCacheAwal).
+    result = getInitialDataBerCache.apply(null, args);
+  } else if (action === 'checkLogin') {
+    result = checkLoginBerCache.apply(null, args);
   } else {
     const backendFunction = globalThis[action] || this[action];
     if (typeof backendFunction !== 'function') {
@@ -162,6 +166,41 @@ function doPost(e) {
 }
 
 /**
+ * Wrapper checkLogin dengan ingatan sukses (CacheService, 120 detik):
+ * - Sukses → catat penanda per-username, kembalikan apa adanya.
+ * - Gagal → bila penanda sukses ADA (berarti kredensial username ini pernah
+ *   benar beberapa saat lalu), coba SEKALI lagi sebelum menyerah — menolong
+ *   kasir dari kegagalan baca User sheet sesaat (terasa sebagai "password
+ *   salah" padahal kredensial benar). Percobaan ulang TETAP memvalidasi
+ *   kredensial penuh — tidak ada pintas keamanan.
+ */
+function checkLoginBerCache(username, password) {
+  const hasil = checkLogin(username, password);
+  if (hasil && hasil.status === true) {
+    try {
+      const cache = CacheService.getScriptCache();
+      if (cache && typeof cache.put === 'function') {
+        cache.put('pos_login_' + String(username || '').trim().toLowerCase(), '1', 120);
+      }
+    } catch (e) { }
+    return hasil;
+  }
+  let penandaSukses = false;
+  try {
+    const cache = CacheService.getScriptCache();
+    if (cache && typeof cache.get === 'function') {
+      penandaSukses = cache.get('pos_login_' + String(username || '').trim().toLowerCase()) === '1';
+    }
+  } catch (e) { }
+  if (penandaSukses) {
+    Logger.log('checkLogin: gagal padahal sukses baru saja — coba sekali lagi (kemungkinan baca sheet sesaat gagal).');
+    const ulang = checkLogin(username, password);
+    if (ulang && ulang.status === true) return ulang;
+  }
+  return hasil;
+}
+
+/**
  * Login POS
  * OPTIMASI: login sukses SEKALIGUS mengembalikan data awal (produk + penjualan
  * terbaru) dalam respons yang sama — frontend tidak perlu roundtrip kedua
@@ -191,7 +230,9 @@ function checkLogin(username, password) {
       // otomatis memakai jalur getInitialData terpisah.
       let dataAwal = null;
       try {
-        dataAwal = getInitialData(60);
+        // Lewat cache 60 dtk: login perangkat kedua/ketiga dalam semenit tidak
+        // membaca ulang sheet Produk + Penjualan (instan, beban sheet turun).
+        dataAwal = getInitialDataBerCache(60);
       } catch (dataErr) {
         Logger.log("checkLogin: gagal memuat data awal (frontend akan fallback): " + dataErr);
       }
@@ -438,6 +479,9 @@ function tambahStokProdukInti(idProduk, qtyTambah, role) {
 
       sheet.getRange(i + 1, peta.col.stok + 1).setValue(stok);
 
+      // Cache payload baca tidak lagi valid (stok berubah di sheet).
+      buangCacheAwal();
+
       return "Berhasil menambah stok " +
         ambilKolom(data[i], peta, 'nama', '') +
         " sebanyak " +
@@ -523,6 +567,69 @@ function getPenjualanData() {
  * Mengurangi jumlah google.script.run dari 2 menjadi 1.
  * ============================================================
  */
+/**
+ * Cache pendek (60 detik) untuk payload pembacaan berulang (getInitialData).
+ *
+ * Ukuran live: login kasir = checkLogin yang di dalamnya memanggil
+ * getInitialData(60) — membaca sheet Produk + jendela 60 baris Penjualan.
+ * Beberapa perangkat kasir + sinkronisasi berkala dapat memanggil ini berkali-
+ * kali dalam semenit; cache membuat panggilan berulang selesai hampir instan
+ * (bukan membaca ulang seluruh sheet).
+ *
+ * Keamanan data: cache HANYA untuk aksi baca, TTL 60 detik, dan DIBUANG paksa
+ * setiap kali prosesCheckout / tambahStokProduk menulis ke sheet (buangCacheAwal)
+ * — jadi stok/riwayat di layar tidak pernah basi oleh cache.
+ * CacheService tidak tersedia (mock uji / lingkungan terbatas) → fallback aman:
+ * lewat saja (perilaku sama seperti sebelumnya, tanpa cache).
+ */
+var KUNCI_CACHE_AWAL = 'pos_awal_v1';
+var TTL_CACHE_AWAL = 60; // detik
+
+function bacaCacheAwal() {
+  try {
+    const cache = CacheService.getScriptCache();
+    if (!cache || typeof cache.get !== 'function') return null;
+    const raw = cache.get(KUNCI_CACHE_AWAL);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return (parsed && Array.isArray(parsed.produk) && Array.isArray(parsed.penjualan)) ? parsed : null;
+  } catch (e) {
+    return null; // cache korup/tidak tersedia → abaikan
+  }
+}
+
+function simpanCacheAwal(payload) {
+  try {
+    const cache = CacheService.getScriptCache();
+    if (!cache || typeof cache.put !== 'function') return;
+    cache.put(KUNCI_CACHE_AWAL, JSON.stringify(payload), TTL_CACHE_AWAL);
+  } catch (e) {
+    // Payload > 100KB atau cache tidak tersedia → lewati, jangan gagalkan request
+  }
+}
+
+function buangCacheAwal() {
+  try {
+    const cache = CacheService.getScriptCache();
+    if (cache && typeof cache.remove === 'function') cache.remove(KUNCI_CACHE_AWAL);
+  } catch (e) { }
+}
+
+/**
+ * Wrapper getInitialData dengan cache baca 60 detik.
+ * HASIL IDENTIK dengan getInitialData biasa — hanya lebih cepat untuk
+ * panggilan berulang dalam semenit.
+ */
+function getInitialDataBerCache(limitPenjualan) {
+  const hit = bacaCacheAwal();
+  if (hit) return hit;
+  const hasil = getInitialData(limitPenjualan);
+  if (hasil && Array.isArray(hasil.produk) && Array.isArray(hasil.penjualan)) {
+    simpanCacheAwal(hasil);
+  }
+  return hasil;
+}
+
 function getInitialData(limitPenjualan) {
   const ss = getSpreadsheet();
   const timezone = ss.getSpreadsheetTimeZone();
@@ -928,6 +1035,10 @@ function prosesCheckoutInti(cart, metode, uangDibayar, requestData) {
           }
         }
       }
+
+      // Cache payload baca dipakai ulang oleh login/refresh — tulis apa pun yang
+      // mengubah stok/penjualan HARUS membatalkannya (lihat buangCacheAwal).
+      buangCacheAwal();
     }
 
     const hasilSukses = {

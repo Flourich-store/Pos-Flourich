@@ -187,6 +187,18 @@ function createGasMock() {
     getActiveSpreadsheet: () => scriptRuntime.activeSpreadsheet
   };
 
+  // Mock CacheService (v89): getInitialDataBerCache/checkLoginBerCache menyimpan
+  // payload baca 60-120 detik. State direkam agar test bisa mengisi/membuang isi
+  // cache secara manual (scriptRuntime.__cacheStore).
+  if (!scriptRuntime.__cacheStore) scriptRuntime.__cacheStore = {};
+  const CacheService = {
+    getScriptCache: () => ({
+      get: (k) => (k in scriptRuntime.__cacheStore ? scriptRuntime.__cacheStore[k] : null),
+      put: (k, v, ttl) => { scriptRuntime.__cacheStore[k] = String(v); },
+      remove: (k) => { delete scriptRuntime.__cacheStore[k]; }
+    })
+  };
+
   const DriveApp = {
     getFolderById: () => { throw new Error('DriveApp tidak tersedia di mock'); }
   };
@@ -228,7 +240,7 @@ function createGasMock() {
 
   return {
     Logger, PropertiesService, SpreadsheetApp, DriveApp, Utilities, ScriptApp,
-    ContentService, HtmlService, LockService, scriptRuntime, createSpreadsheetMock, __lockState: lockState
+    ContentService, HtmlService, LockService, CacheService, scriptRuntime, createSpreadsheetMock, __lockState: lockState
   };
 }
 
@@ -249,6 +261,7 @@ function loadBackend(gas) {
     Utilities: gas.Utilities,
     ScriptApp: gas.ScriptApp,
     LockService: gas.LockService,
+    CacheService: gas.CacheService,
     ContentService: gas.ContentService,
     HtmlService: gas.HtmlService,
     Session: { getActiveUser: () => ({ getEmail: () => '' }) },
@@ -280,6 +293,9 @@ function loadBackend(gas) {
     getProdukData: sandbox.getProdukData,
     getPenjualanData: sandbox.getPenjualanData,
     getInitialData: sandbox.getInitialData,
+    getInitialDataBerCache: sandbox.getInitialDataBerCache,
+    checkLoginBerCache: sandbox.checkLoginBerCache,
+    eksekusiAksi: sandbox.eksekusiAksi,
     doPost: sandbox.doPost,
     doGet: sandbox.doGet,
     diagnostikPenjualan: sandbox.diagnostikPenjualan,
@@ -327,6 +343,7 @@ function loadBackendDiagnostik(gas) {
     Utilities: gas.Utilities,
     ScriptApp: gas.ScriptApp,
     LockService: gas.LockService,
+    CacheService: gas.CacheService,
     ContentService: gas.ContentService,
     HtmlService: gas.HtmlService,
     Session: { getActiveUser: () => ({ getEmail: () => '' }) },
@@ -393,6 +410,7 @@ function loadBackendBackfill(gas) {
     Utilities: gas.Utilities,
     ScriptApp: gas.ScriptApp,
     LockService: gas.LockService,
+    CacheService: gas.CacheService,
     ContentService: gas.ContentService,
     HtmlService: gas.HtmlService,
     Session: { getActiveUser: () => ({ getEmail: () => '' }) },

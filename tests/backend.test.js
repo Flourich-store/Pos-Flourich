@@ -1846,4 +1846,76 @@ r.suite('Backend - P5: getSpreadsheet tidak menulis log per-panggilan', () => {
   });
 });
 
+// ============================================================
+// v89: cache baca getInitialData (CacheService, 60 dtk, dibuang saat tulis)
+// ============================================================
+
+r.suite('Backend — cache baca getInitialData (v89)', () => {
+
+  function setup() {
+    const gas = createGasMock();
+    gas.scriptRuntime.activeSpreadsheet = gas.createSpreadsheetMock(PRODUK_VALID);
+    const backend = loadBackend(gas);
+    return { gas, backend, cache: gas.scriptRuntime.__cacheStore };
+  }
+
+  r.test('panggilan berulang dalam 60 dtk memakai cache (payload identik)', () => {
+    const { backend, cache } = setup();
+
+    const a = backend.getInitialDataBerCache(60);
+    const b = backend.getInitialDataBerCache(60);
+    r.assertEq(JSON.stringify(b), JSON.stringify(a), 'hasil panggilan kedua identik (dari cache)');
+    r.assertOk(cache['pos_awal_v1'], 'cache terisi setelah panggilan pertama');
+  });
+
+  r.test('eksekusiAksi getInitialData memakai jalur cache', () => {
+    const { backend, cache } = setup();
+    const res = backend.eksekusiAksi({ action: 'getInitialData', args: [60] });
+    r.assertArray(res.produk, 'payload utuh');
+    r.assertOk(cache['pos_awal_v1'], 'cache terisi via eksekusiAksi');
+  });
+
+  r.test('checkout MENGHAPUS cache — data stok/riwayat berikutnya selalu segar', () => {
+    const { backend, cache } = setup();
+    backend.eksekusiAksi({ action: 'getInitialData', args: [60] });
+    r.assertOk(cache['pos_awal_v1'], 'cache terisi dulu');
+
+    backend.eksekusiAksi({ action: 'prosesCheckout', args: [
+      [{ id: '1', nama: 'Semangci 250 ml', jumlah: 1, total: 15000 }], 'CASH', 20000
+    ] });
+    r.assertOk(!cache['pos_awal_v1'], 'cache dibuang setelah checkout');
+  });
+
+  r.test('tambahStokProduk MENGHAPUS cache', () => {
+    const { backend, cache } = setup();
+    backend.eksekusiAksi({ action: 'getInitialData', args: [60] });
+    r.assertOk(cache['pos_awal_v1'], 'cache terisi dulu');
+
+    backend.eksekusiAksi({ action: 'tambahStokProduk', args: ['1', 5, 'KASIR'] });
+    r.assertOk(!cache['pos_awal_v1'], 'cache dibuang setelah tambah stok');
+  });
+
+  r.test('cache korup dibuang aman — baca ulang sheet tetap benar', () => {
+    const { backend, cache } = setup();
+    cache['pos_awal_v1'] = '{bukan json';
+    const hasil = backend.getInitialDataBerCache(60);
+    r.assertArray(hasil.produk, 'fallback baca sheet tetap utuh');
+  });
+
+  r.test('checkLogin sukses dicatat; gagal sesaat setelah sukses dicoba sekali lagi', () => {
+    const { backend, cache } = setup();
+    const ok = backend.checkLoginBerCache('admin', 'password');
+    r.assertEq(ok.status, true, 'login sukses');
+    r.assertEq(cache['pos_login_admin'], '1', 'penanda sukses tercatat');
+  });
+
+  r.test('login dengan password salah tetap ditolak (tidak ada pintas keamanan)', () => {
+    const { backend } = setup();
+    backend.checkLoginBerCache('admin', 'password'); // catat sukses dulu
+    const gagal = backend.checkLoginBerCache('admin', 'SALAH');
+    r.assertEq(gagal.status, false, 'kredensial salah tetap ditolak');
+  });
+
+});
+
 r.run('Backend Code.js').then(ok => { process.exit(ok ? 0 : 1); });
