@@ -9,7 +9,7 @@
   <!-- Penanda versi halaman: dipakai self-check di blok script bawah untuk
        auto-reload bila browser mobile masih menyimpan HTML lama (GitHub Pages
        meng-cache 10 menit). Naikkan BERSAMAAN dengan VERSI_HTML tiap rilis. -->
-  <meta name="app-version" content="87">
+  <meta name="app-version" content="88">
 
   <link rel="icon" type="image/png" sizes="192x192"
     href="https://lh3.googleusercontent.com/d/1kbCU9E4sSQTdBylR24DFnRvsX1cAT">
@@ -1932,7 +1932,7 @@
     // berkurang setelah checkout" di HP: perangkat menjalankan kode tua tanpa
     // sadar. Bila versi di server lebih baru dari versi yang berjalan, muat
     // ulang SEKALI otomatis. Penanda versi = <meta name="app-version">.
-    const VERSI_HTML = 87;
+    const VERSI_HTML = 88;
     function periksaVersiHalaman() {
       try {
         if (window.location.protocol === 'file:') return; // mode lokal: tidak relevan
@@ -2163,11 +2163,18 @@
       return bacaAntrianOffline().filter(it => it && it.status === 'pending').length;
     }
 
+    // P9: transaksi yang gagal terkirim permanen (jaringan) TIDAK dibuang — tetap dihitung
+    // agar badge/peringatan tidak menutup-nutupi. (Pemicu kirim ulang otomatis tetap hanya
+    // item berstatus 'pending'.)
+    function jumlahAntrianNyangkut() {
+      return bacaAntrianOffline().filter(it => it && it.status === 'gagal_jaringan').length;
+    }
+
     function perbaruiIndikatorAntrian() {
       const badge = document.getElementById('offlineQueueBadge');
       const teks = document.getElementById('offlineQueueCount');
       if (!badge || !teks) return;
-      const jumlah = jumlahAntrianTertunda();
+      const jumlah = jumlahAntrianTertunda() + jumlahAntrianNyangkut();
       teks.textContent = String(jumlah);
       if (jumlah > 0) badge.classList.remove('hidden');
       else badge.classList.add('hidden');
@@ -2199,8 +2206,11 @@
               // Jaringan masih putus: sisakan pending, coba lagi nanti.
               item.percobaan = (item.percobaan || 0) + 1;
               if (item.percobaan >= RETRY_MAKS_PER_ITEM) {
-                item.status = 'gagal';
-                item.alasanGagal = 'Jaringan tidak pulih setelah ' + item.percobaan + ' percobaan.';
+                // P9: gagal jaringan permanen TIDAK dibuang diam-diam. Status terpisah dari
+                // 'gagal' (bisnis) agar item tetap tersimpan dan badge/peringatan menampilkannya.
+                item.status = 'gagal_jaringan';
+                item.alasanGagal = 'Jaringan tidak pulih setelah ' + item.percobaan + ' percobaan — transaksi tetap tersimpan di perangkat ini.';
+                alert('Transaksi belum terkirim ke server setelah ' + item.percobaan + ' percobaan — transaksi tetap tersimpan aman di perangkat ini. Periksa koneksi lalu refresh halaman, atau hubungi admin.');
               }
               break; // hentikan putaran ini; jadwal berikutnya melanjutkan
             }
@@ -2224,7 +2234,8 @@
           }
         }
         // Buang item yang sudah terkirim / gagal permanen.
-        antrianSekarang = antrianSekarang.filter(it => it && it.status === 'pending');
+        // P9: item gagal_jaringan TETAP tersimpan (yang dibuang hanya success & gagal bisnis).
+        antrianSekarang = antrianSekarang.filter(it => it && (it.status === 'pending' || it.status === 'gagal_jaringan'));
         simpanAntrianOffline(antrianSekarang);
       } finally {
         isMengirimAntrian = false;
@@ -3402,6 +3413,7 @@
             metode: metode,
             offline: true
           };
+          window.lastReceiptItems = (Array.isArray(cart) ? cart : []).map(function (it) { return { nama: it && it.nama, jumlah: it && it.jumlah, hargaPerPcs: it && it.jumlah ? (it.total / it.jumlah) : 0 }; });
           // Jaringan putus: SIMPAN ke antrian lokal — transaksi tidak boleh hilang.
           try {
             const antrian = bacaAntrianOffline();
@@ -3427,9 +3439,10 @@
             document.getElementById('kembalianBox').innerHTML = 'Uang Kembali : Rp 0';
             perbaruiIndikatorAntrian();
             jadwalkanKirimAntrianOffline(5000);
-            alert('Jaringan terputus, tapi transaksi Anda AMAN.\n\n' +
-              'ID sementara: ' + transaksiLokal + '\n' +
-              'Struk sudah dicetak. Transaksi otomatis dikirim ke server saat koneksi pulih — tidak perlu diinput ulang.');
+            // P7+P8: struk digital tampil SEKETIKA dengan catatan offline. Alert lama ("Struk sudah
+            // dicetak") menyesatkan — di jalur ini struk TIDAK pernah dicetak otomatis; kini kasir
+            // benar-benar melihat struk beserta catatan sinkron otomatis.
+            showReceiptModal();
           } catch (simpanErr) {
             console.error('Gagal menyimpan ke antrian offline:', simpanErr);
             alert('Checkout gagal: ' + msg + '\n\nTransaksi TIDAK tercatat dan keranjang masih aman — silakan tekan PROSES TRANSAKSI lagi.');
