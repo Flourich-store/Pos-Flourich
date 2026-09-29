@@ -222,6 +222,32 @@ r.suite('Login gagal: tidak ada fetch data', () => {
 
 });
 
+r.suite('Login sukses: filter tabel dibersihkan', () => {
+
+  // Gejala nyata: "login berhasil tapi tabel riwayat kosong".
+  // Penyebab: sisa filter dari kunjungan sebelumnya (filterSearch / rentang
+  // tanggal) tidak pernah dikosongkan saat login, jadi applyFilter() langsung
+  // menyaring seluruh baris dan tabel menampilkan keadaan kosong.
+
+  r.test('sisa pencarian & filter tanggal dikosongkan setelah login sukses', () => {
+    const sk = loadLoginSkenario({});
+    sk.dom.window.__elements['filterSearch'].value = 'zzz-tidak-ada';
+    sk.dom.window.__elements['filterStartDate'].value = '2000-01-01';
+    sk.dom.window.__elements['filterEndDate'].value = '2000-01-02';
+
+    isiKredensialAdmin(sk.dom);
+    sk.app.call('login');
+
+    r.assertEq(sk.dom.window.__elements['filterSearch'].value, '',
+      'filter pencarian dikosongkan, bukan menyaring tabel jadi kosong');
+    r.assertEq(sk.dom.window.__elements['filterStartDate'].value, '',
+      'filter tanggal awal dikosongkan');
+    r.assertEq(sk.dom.window.__elements['filterEndDate'].value, '',
+      'filter tanggal akhir dikosongkan');
+  });
+
+});
+
 r.run('frontend_login.test.js').then(ok => {
   process.exit(ok ? 0 : 1);
 });
