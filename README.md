@@ -91,6 +91,54 @@ node tests/audit_input.test.js
   stok sheet tidak disentuh (stok manual); uang kurang ditolak konsisten oleh
   frontend & backend.
 
+### Perbaikan v87 — "tabel kosong" setelah login (P1, P2, P4) + P5
+
+Akar masalah "login sukses tapi tabel produk/riwayat kosong" terbukti DUA, keduanya
+di frontend, keduanya terverifikasi di halaman live.
+
+- **P1 — guard interaksi menelan update server tanpa jejak** (penyebab utama).
+  `renderFromCache()` `return` begitu `isUserInteracting` menyala, dan flag itu hanya
+  dilepas `focusout`. Di perangkat kasir `focusout` kadang tak pernah datang (tekan
+  tombol tanpa lepas fokus, pindah aplikasi, layar terkunci) sehingga flag nyangkut dan
+  SETIAP update berikutnya hilang diam-diam — termasuk sinkronisasi 45 detik. Terbukti
+  di live: 7/10 → server kirim 2 produk, guard menyala tetap 7/10; guard dilepas
+  langsung 2/1. Kini flag `renderTertunda` mencatat update yang ditahan dan
+  mengeksekusinya begitu interaksi selesai, lewat tiga pemicu tanpa timer/tebakan:
+  `focusout`, `window blur`, `visibilitychange`. Tidak ada yang tertahan → tidak ada
+  render sia-sia.
+- **P2 — sisa filter tidak pernah dikosongkan saat login.** `filterSearch` dan
+  rentang tanggal bertahan dari kunjungan sebelumnya, jadi `applyFilter()` langsung
+  menyaring seluruh baris dan riwayat tampil kosong. Terbukti di live: sisa
+  `zzz-tidak-ada` → 1 baris (empty state), dikosongkan → 10 baris. Login sukses kini
+  memanggil `resetFilter()` yang sudah ada.
+- **P4 — tick sinkronisasi 45 detik yang pasti sia-sia dilewati.** Setelah P1, hasil
+  refresh yang masuk saat guard menyala nol byte-nya sampai ke layar, tapi tetap
+  dibayar penuh ke Spreadsheet. Pentanya di dalam callback `setInterval`, BUKAN di
+  dalam `refreshData` — yang terakhir akan ikut mematikan refresh setelah
+  checkout/tambah stok. Terukur: tab terlihat & tidak berinteraksi → 1 request;
+  berinteraksi → 0; interaksi selesai → 1; tab tersembunyi → 0; refresh setelah
+  checkout tetap 1 walau tab tersembunyi.
+- **P5 — dua `Logger.log()` per-panggilan di `getSpreadsheet()` dibuang.** Fungsi ini
+  dipanggil hampir di setiap aksi server; ENV & ssId praktis tidak pernah berubah.
+  Terukur 2 baris log per panggilan, 40 baris untuk 20 panggilan, dan log yang
+  berguna (HPP kosong, header tidak ketemu, idempotensi) tenggelam. Detail env+ssId
+  dipindah ke jalur `catch` — muncul justru saat `openById` gagal. Log error sendiri
+  TIDAK dibungkam. **Belum aktif di kasir**: perlu deployment baru (v90).
+- **P3 — sudah DIUKUR, lalu ditolak.** Dugaan awal "hemat 3-5 detik/login" ternyata
+  salah: tidak ada antrean request (`apiRequest` = `fetch` biasa), sehingga fetch
+  pre-login berjalan paralel dan dampaknya hanya kontensi ±0,3-0,7 detik. Deduksi
+  "tarik seluruh riwayat 524 baris" juga salah — `getInitialData` sudah punya default
+  60 baris, jadi `getInitialData[]` identik dengan `[60]` (61 baris, 13 kolom,
+  keduanya). Yang benar-benar terbuang cuma ~3 detik KUOTA Apps Script per page load,
+  bukan kecepatan yang dilihat kasir. Menghapusnya berarti membuang jaring pengaman
+  cache hangat — kategori bug yang justru baru diperbaiki. **Keputusan pemilik: jangan
+  kerjakan.** Angka di sini supaya tidak dianalisis ulang.
+
+Suite: 281 → 295 tes, semua hijau. 9 tes regresi baru (P1 ×5, P2 ×1, P4 ×5, P5 ×3),
+semuanya ditulis lebih dulu dan sudah diamati gagal sebelum kodenya diubah. Assertion
+"interval 45000 ms" yang rapuh (jendela 400 karakter) diganti membaca nilai dari
+argumen `setInterval` — tetap setektif, hanya tahan terhadap komentar tambahan.
+
 ### Perbaikan v84 — Fase 2: ikon SVG inline (FontAwesome dihapus) + fix payload riwayat
 
 - **FIX BUG LIVE "struktur data berubah"**: trim payload v83 membuat header 11
