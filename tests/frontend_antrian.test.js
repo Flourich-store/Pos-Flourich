@@ -129,17 +129,32 @@ r.suite('Antrian Offline — penyimpanan saat jaringan putus', () => {
     r.assertOk(panggilan.length >= 3, 'POST dicoba minimal 3x sebelum masuk antrian');
   });
 
-  r.test('kasir tetap melihat konfirmasi transaksi aman (alert + struk lokal)', async () => {
+  r.test('checkout offline -> struk digital LANGSUNG tampil (modal + isi produk, bukan alert palsu)', async () => {
     const { dom, app } = muatSkenario(999);
     await tekanCheckoutGagalJaringan(app, dom, CART_SEMANGCI_2);
 
-    const gabung = dom.alerts.join(' | ');
-    r.assertIncludes(gabung, 'FR-OFF-', 'alert menampilkan ID sementara');
-    r.assertIncludes(gabung, 'otomatis', 'alert menjelaskan pengiriman otomatis saat koneksi pulih');
-    // Struk lokal tetap tersedia (kasir bisa mencetak bukti)
+    // P7: jalur offline wajib MENAMPILKAN struk, bukan hanya alert teks.
+    const receiptModal = dom.window.document.getElementById('receiptModal');
+    r.assertFalse(receiptModal.classList.contains('hidden'), 'modal struk ditampilkan di jalur offline');
+
+    const content = dom.window.document.getElementById('receiptContent').innerHTML;
+    r.assertIncludes(content, 'Semangci 250 ml', 'struk memuat nama produk (bukan "Item tidak tersedia")');
+    r.assertNotIncludes(content, 'Item tidak tersedia', 'isi struk offline bukan placeholder kosong');
+    r.assertIncludes(content, 'otomatis', 'struk menjelaskan pengiriman otomatis saat koneksi pulih');
+
+    const items = app.sandbox.window.lastReceiptItems;
+    r.assertArray(items, 'lastReceiptItems tersedia untuk struk offline');
+    r.assertEq(items.length, 1, 'item struk sesuai keranjang');
+
     const receipt = app.sandbox.window.lastReceipt;
     r.assertOk(receipt && receipt.transaksi && String(receipt.transaksi).startsWith('FR-OFF-'),
       'struk lokal (lastReceipt) memakai ID FR-OFF-');
+    r.assertOk(receipt && receipt.offline === true, 'struk lokal bertanda offline');
+
+    // P8: tidak ada klaim palsu "Struk sudah dicetak" / tuduhan jaringan di alert
+    const gabung = dom.alerts.join(' | ');
+    r.assertNotIncludes(gabung, 'Struk sudah dicetak', 'tidak ada klaim "Struk sudah dicetak" yang menyesatkan');
+    r.assertNotIncludes(gabung, 'Jaringan terputus', 'tidak menyalahkan jaringan saat penyebabnya server lambat');
   });
 
   r.test('keranjang dikosongkan & badge antrian tampil setelah masuk antrian', async () => {
@@ -375,20 +390,26 @@ r.suite('Antrian Offline — batas & ketahanan', () => {
     r.assertEq(app.call('jumlahAntrianTertunda'), 0);
   });
 
-  r.test('RETRY_MAKS_PER_ITEM = 8 tercapai -> item dikeluarkan dari antrian (gagal permanen)', async () => {
+  r.test('RETRY_MAKS_PER_ITEM = 8 jaringan -> item TETAP tersimpan (gagal_jaringan) + peringatan terlihat', async () => {
     const { dom, app } = muatSkenario(999); // jaringan selalu gagal
     await tekanCheckoutGagalJaringan(app, dom, CART_SEMANGCI_2);
 
-    // Simulasi 7 percobaan gagal sebelumnya, lalu 1 lagi -> habis kuota
+    // Simulasi 7 percobaan gagal sebelumnya, lalu 1 lagi -> kuota jaringan habis
     const antrian = JSON.parse(dom.localStorage.getItem('pos_offline_queue'));
     antrian[0].percobaan = 7;
     dom.localStorage.setItem('pos_offline_queue', JSON.stringify(antrian));
+    dom.alerts.length = 0;
 
     await app.call('kirimAntrianOffline');
     await flush();
 
+    // P9: transaksi TIDAK dibuang diam-diam — tetap tersimpan, berstatus khusus.
     const sisa = JSON.parse(dom.localStorage.getItem('pos_offline_queue') || '[]');
-    r.assertEq(sisa.length, 0, 'item gagal permanen dikeluarkan dari antrian');
+    r.assertEq(sisa.length, 1, 'item gagal jaringan TIDAK dibuang');
+    r.assertEq(sisa[0].status, 'gagal_jaringan', 'status menandai gagal jaringan permanen');
+    r.assertIncludes(sisa[0].alasanGagal || '', 'tersimpan', 'alasan menjelaskan bahwa transaksi tersimpan');
+    r.assertIncludes(dom.alerts.join(' '), 'tersimpan', 'peringatan terlihat di layar kasir');
+    r.assertEq(badgeCount(dom), '1', 'badge tetap menampilkan transaksi yang menunggu penanganan');
   });
 
   r.test('QUEUE_MAKS = 50: penuh -> checkout menolak & transaksi tetap di keranjang', async () => {
@@ -410,6 +431,109 @@ r.suite('Antrian Offline — batas & ketahanan', () => {
     r.assertEq(app.get('cart').length, 1, 'keranjang TIDAK dikosongkan — kasir bisa coba lagi');
     const tetap = JSON.parse(dom.localStorage.getItem('pos_offline_queue') || '[]');
     r.assertEq(tetap.length, 50, 'tidak ada item ke-51');
+  });
+});
+
+// ============================================================
+// 5. P7/P8 — struk digital tampil di jalur offline + pesan akurat
+// ============================================================
+
+r.suite('Antrian Offline — struk tampil & pesan akurat (P7/P8)', () => {
+
+  r.test('timeout klien (AbortError) -> struk offline tetap tampil dengan pesan AKURAT', async () => {
+    // Jaringan BISA normal; server cuma lambat (respons > batas waktu).
+    const dom = createDomStub();
+    const app = loadFrontend(dom);
+    dom.window.location.protocol = 'https:';
+    app.sandbox.fetch = function () {
+      return Promise.reject({ name: 'AbortError', message: 'Pesan timeout' });
+    };
+
+    await tekanCheckoutGagalJaringan(app, dom, CART_SEMANGCI_2);
+
+    const receiptModal = dom.window.document.getElementById('receiptModal');
+    r.assertFalse(receiptModal.classList.contains('hidden'), 'struk tampil setelah timeout');
+
+    const content = dom.window.document.getElementById('receiptContent').innerHTML;
+    r.assertIncludes(content, 'otomatis', 'struk menjelaskan pengiriman otomatis');
+    r.assertNotIncludes(content, 'Struk sudah dicetak', 'tidak ada klaim palsu');
+
+    const gabung = dom.alerts.join(' | ');
+    r.assertNotIncludes(gabung, 'Struk sudah dicetak');
+    r.assertNotIncludes(gabung, 'Jaringan terputus', 'tidak menuduh jaringan saat penyebabnya timeout');
+
+    const antrian = JSON.parse(dom.localStorage.getItem('pos_offline_queue') || '[]');
+    r.assertEq(antrian.length, 1, 'transaksi tetap masuk antrian (tidak hilang)');
+    r.assertEq(antrian[0].status, 'pending');
+  });
+
+  r.test('respons HTML/5xx dari infrastruktur Google -> diperlakukan offline, struk tetap tampil', async () => {
+    const dom = createDomStub();
+    const app = loadFrontend(dom);
+    dom.window.location.protocol = 'https:';
+    app.sandbox.fetch = function () {
+      return Promise.resolve({ ok: false, status: 500, text: () => Promise.resolve('<html>bukan json</html>') });
+    };
+
+    await tekanCheckoutGagalJaringan(app, dom, CART_SEMANGCI_2);
+
+    const receiptModal = dom.window.document.getElementById('receiptModal');
+    r.assertFalse(receiptModal.classList.contains('hidden'), 'struk tampil meski server balas error infra');
+    const antrian = JSON.parse(dom.localStorage.getItem('pos_offline_queue') || '[]');
+    r.assertEq(antrian.length, 1, 'transaksi aman di antrian');
+  });
+});
+
+// ============================================================
+// 6. P9 — gagal jaringan permanen tidak hilang diam-diam
+// ============================================================
+
+r.suite('Antrian Offline — gagal jaringan permanen tersimpan (P9)', () => {
+
+  r.test('flush berikutnya TIDAK mengirim ulang item gagal_jaringan (bukan loop abadi)', async () => {
+    const { dom, app, panggilan } = muatSkenario(999);
+    await tekanCheckoutGagalJaringan(app, dom, CART_SEMANGCI_2);
+
+    let antrian = JSON.parse(dom.localStorage.getItem('pos_offline_queue'));
+    antrian[0].percobaan = 7;
+    dom.localStorage.setItem('pos_offline_queue', JSON.stringify(antrian));
+    await app.call('kirimAntrianOffline');
+    await flush();
+
+    const sisaPertama = JSON.parse(dom.localStorage.getItem('pos_offline_queue') || '[]');
+    r.assertEq(sisaPertama.length, 1);
+    r.assertEq(sisaPertama[0].status, 'gagal_jaringan');
+
+    const sebelum = panggilan.length;
+    await app.call('kirimAntrianOffline');
+    await flush();
+
+    const sisa = JSON.parse(dom.localStorage.getItem('pos_offline_queue') || '[]');
+    r.assertEq(sisa.length, 1, 'tetap tersimpan');
+    r.assertEq(sisa[0].status, 'gagal_jaringan');
+    r.assertEq(panggilan.length, sebelum, 'tidak ada percobaan kirim baru untuk item gagal_jaringan');
+    r.assertEq(badgeCount(dom), '1', 'badge tetap menampilkan transaksi yang menunggu penanganan');
+  });
+
+  r.test('refresh data sukses TIDAK menghapus item gagal_jaringan & badge tetap tampil', async () => {
+    const { dom, app } = muatSkenario(999);
+    await tekanCheckoutGagalJaringan(app, dom, CART_SEMANGCI_2);
+
+    let antrian = JSON.parse(dom.localStorage.getItem('pos_offline_queue'));
+    antrian[0].percobaan = 7;
+    dom.localStorage.setItem('pos_offline_queue', JSON.stringify(antrian));
+    await app.call('kirimAntrianOffline');
+    await flush();
+    r.assertEq(badgeCount(dom), '1', 'badge tampil sebelum refresh');
+
+    // Data server sukses ditarik (refresh halaman) — item nyangkut TIDAK hilang.
+    app.call('simpanDanRenderData', { produk: PRODUK_VALID, penjualan: [] });
+    await flush();
+
+    const sisa = JSON.parse(dom.localStorage.getItem('pos_offline_queue') || '[]');
+    r.assertEq(sisa.length, 1, 'refresh tidak menghapus item yang menunggu penanganan');
+    r.assertEq(sisa[0].status, 'gagal_jaringan');
+    r.assertEq(badgeCount(dom), '1', 'badge tetap tampil setelah refresh');
   });
 });
 
