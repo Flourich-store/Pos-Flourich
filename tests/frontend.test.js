@@ -354,12 +354,17 @@ r.suite('Grup B — badge metode & label versi 13 kolom (v86)', () => {
     r.assertIncludes(html, 'Rp 0</td>', 'Biaya Operasional 0 asli tetap Rp 0');
   });
 
-  r.test('label versi naik ke 86 di meta & konstanta (sinkron dengan backend baru)', () => {
+  r.test('penanda versi sinkron antara meta & konstanta (keduanya 87)', () => {
     const { app } = siapkanAplikasi(RESPON_VALID);
     const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
     const meta = (html.match(/<meta name="app-version" content="(\d+)"/) || [])[1];
-    r.assertEq(meta, '86', 'meta app-version = 86');
-    r.assertEq(app.get('VERSI_HTML'), 86, 'VERSI_HTML = 86');
+    r.assertEq(meta, '87', 'meta app-version = 87');
+    r.assertEq(app.get('VERSI_HTML'), 87, 'VERSI_HTML = 87');
+    // Invariant yang disebut di komentar meta: keduanya HARUS dinaikkan bersama.
+    // Kalau tidak sinkron, self-check auto-reload salah arah dan kasir
+    // terjebak di HTML lama atau reload berulang.
+    r.assertEq(meta, String(app.get('VERSI_HTML')),
+      'meta app-version dan VERSI_HTML tidak boleh berbeda');
   });
 });
 
