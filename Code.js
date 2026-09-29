@@ -2313,9 +2313,6 @@ function getSpreadsheet() {
     var props = PropertiesService.getScriptProperties();
     var env = String(props.getProperty('ENV') || 'development').toLowerCase().trim();
 
-    // Log untuk debugging
-    Logger.log('ENV yang terdeteksi: ' + env);
-
     var ssId;
 
     if (env === 'production') {
@@ -2325,10 +2322,16 @@ function getSpreadsheet() {
       ssId = props.getProperty('SS_ID_DEV') || '1CVrF7B3TfTF8LYM5neg14gHfhgRS5O7hELlEMwCAWzk';
     }
 
-    Logger.log('ssId yang dipakai: ' + ssId);
+    // Sengaja TANPA Logger.log di jalur ini. Fungsi ini dipanggil hampir di
+    // setiap aksi server (baca produk, riwayat, checkout, stok, laporan),
+    // sedangkan ENV dan ssId praktis tidak pernah berubah -- jadi lognya
+    // selalu isi yang sama persis dan hanya menenggelamkan log yang berguna
+    // (HPP kosong, kolom header tidak ketemu, idempotensi).
     return SpreadsheetApp.openById(ssId);
   } catch (e) {
-    Logger.log('Error openById, fallback ke getActiveSpreadsheet: ' + e);
+    // Detail ENV + ssId dipindah ke sini: justru di sinilah nilainya
+    // dibutuhkan, jadi informasinya tidak hilang, hanya muncul saat relevan.
+    Logger.log('Error openById (env=' + env + ', ssId=' + ssId + '), fallback ke getActiveSpreadsheet: ' + e);
     return SpreadsheetApp.getActiveSpreadsheet();
   }
 }
