@@ -9,7 +9,7 @@
   <!-- Penanda versi halaman: dipakai self-check di blok script bawah untuk
        auto-reload bila browser mobile masih menyimpan HTML lama (GitHub Pages
        meng-cache 10 menit). Naikkan BERSAMAAN dengan VERSI_HTML tiap rilis. -->
-  <meta name="app-version" content="90">
+  <meta name="app-version" content="91">
 
   <link rel="icon" type="image/png" sizes="192x192"
     href="https://lh3.googleusercontent.com/d/1kbCU9E4sSQTdBylR24DFnRvsX1cAT">
@@ -457,11 +457,16 @@
     }
 
     .btn-table-action {
-      width: 38px;
-      height: 38px;
-      padding: 0;
-      border-radius: var(--radius-sm);
-      font-size: 13px;
+      /* v91: tombol berisi ikon+teks ("Stok"/"Pilih"), jadi lebar harus mengikuti
+         isi — kotak tetap 38px membuat teks meluber keluar tombol (terukur:
+         clientWidth 36px < scrollWidth 41px). Pill auto-width + nowrap. */
+      width: auto;
+      min-width: 0;
+      height: 34px;
+      padding: 0 12px;
+      border-radius: 999px;
+      font-size: 12.5px;
+      white-space: nowrap;
       flex-shrink: 0;
     }
 
@@ -751,6 +756,24 @@
     .product-title {
       font-weight: 700;
       color: var(--ink);
+      /* v91: nama panjang dipotong rapi dengan ellipsis — tinggi baris tabel
+         jadi konsisten, kolom PRODUK tidak memaksa tabel melebar. */
+      display: block;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    /* v91: tabel stok pakai layout fixed agar kolom patuh pada colgroup
+       (persentase lama 38%+28% totalnya >100% sehingga kolom tak konsisten).
+       Padding lebih rapat supaya semua kolom muat tanpa scroll di desktop. */
+    #stokTable {
+      table-layout: fixed;
+    }
+
+    #stokTable thead th,
+    #stokTable tbody td {
+      padding: 10px 10px;
     }
 
     .price-text {
@@ -1497,11 +1520,13 @@
         width: 100%;
       }
 
-      /* Target sentuh minimal 44px (pedoman iOS HIG / Android Material) */
+      /* Target sentuh minimal 44px (pedoman iOS HIG / Android Material).
+         v91: lebar tidak lagi dikunci 44px — tombol berisi teks, cukup
+         tinggi yang dinaikkan + padding horizontal. */
       .btn-table-action {
-        width: 44px;
         height: 44px;
-        font-size: 14px;
+        padding: 0 14px;
+        font-size: 13px;
       }
 
       .receipt-actions .btn-receipt-action {
@@ -1782,13 +1807,16 @@
           <h3><svg class="ic" aria-hidden="true"><use href="#icon-boxes-stacked"/></svg> Stok Produk Hari Ini</h3>
           <div class="table-responsive overflow-x-auto w-full"
             style="border-radius: var(--radius-md); overflow-x: auto;">
-            <table id="stokTable" class="min-w-[650px]" style="min-width: 650px;">
+            <table id="stokTable" style="min-width: 480px;">
               <colgroup>
-                <col style="width: 45px;">
-                <col style="width: 38%;">
-                <col style="width: 45px;">
-                <col style="width: 28%;">
-                <col style="width: 55px;">
+                <!-- v91: lebar pasti (px) pasangan table-layout:fixed. Kolom
+                     PRODUK otomatis mengambil sisa lebar. Total kolom tetap
+                     480px < 516px kartu desktop -> tidak scroll di desktop. -->
+                <col style="width: 60px;">
+                <col>
+                <col style="width: 66px;">
+                <col style="width: 108px;">
+                <col style="width: 96px;">
               </colgroup>
               <thead>
                 <tr>
@@ -1955,7 +1983,7 @@
     // berkurang setelah checkout" di HP: perangkat menjalankan kode tua tanpa
     // sadar. Bila versi di server lebih baru dari versi yang berjalan, muat
     // ulang SEKALI otomatis. Penanda versi = <meta name="app-version">.
-    const VERSI_HTML = 90;
+    const VERSI_HTML = 91;
     function periksaVersiHalaman() {
       try {
         if (window.location.protocol === 'file:') return; // mode lokal: tidak relevan
