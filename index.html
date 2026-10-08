@@ -9,7 +9,7 @@
   <!-- Penanda versi halaman: dipakai self-check di blok script bawah untuk
        auto-reload bila browser mobile masih menyimpan HTML lama (GitHub Pages
        meng-cache 10 menit). Naikkan BERSAMAAN dengan VERSI_HTML tiap rilis. -->
-  <meta name="app-version" content="91">
+  <meta name="app-version" content="92">
 
   <link rel="icon" type="image/png" sizes="192x192"
     href="https://lh3.googleusercontent.com/d/1kbCU9E4sSQTdBylR24DFnRvsX1cAT">
@@ -1983,7 +1983,7 @@
     // berkurang setelah checkout" di HP: perangkat menjalankan kode tua tanpa
     // sadar. Bila versi di server lebih baru dari versi yang berjalan, muat
     // ulang SEKALI otomatis. Penanda versi = <meta name="app-version">.
-    const VERSI_HTML = 91;
+    const VERSI_HTML = 92;
     function periksaVersiHalaman() {
       try {
         if (window.location.protocol === 'file:') return; // mode lokal: tidak relevan
@@ -2560,8 +2560,10 @@
     }
 
     /**
-     * LOGIN PARALEL (v89.1): kirim checkLogin ke endpoint UTAMA dan CADANGAN
-     * SEKALIGUS — jawaban tercepat menang, yang lain diabaikan.
+     * LOGIN PARALEL (v89.1, disempurnakan v92): checkLogin dikirim ke dua
+     * endpoint — MULAI dari endpoint tercepat tercatat, endpoint satunya
+     * menyusul 350 ms kemudian sebagai penutup — jawaban sukses tercepat
+     * menang, yang lain diabaikan.
      *
      * Alasan: ukuran live menunjukkan latency endpoint berfluktuasi ekstrem
      * (4-13 dtk, bergantian, tanpa pola) akibat routing internal Google yang
@@ -2574,6 +2576,35 @@
      * tertutup endpoint satunya. Bila cadangan tak terdefinisi (mode lokal/
      * mock), jalur lama dipakai.
      */
+    /**
+     * v92 — ENDPOINT START PINTAR: ingat endpoint mana yang TERAKHIR menjawab
+     * login sukses lebih dulu, lalu jadikan jalur mulai panggilan login
+     * berikutnya. Terukur: latency 2 endpoint berfluktuasi dan sering
+     * bergantian; alur login lama selalu memulai dari endpoint utama walau
+     * cadangan terbukti lebih cepat di kunjungan sebelumnya.
+     *
+     * TIDAK mengubah logika login: kedua endpoint tetap saling menutup
+     * (endpoint kedua menyusul setelah jeda pendek), jawaban sukses TERCEPAT
+     * tetap menang, dan catatan otomatis memperbarui diri tiap login sukses.
+     */
+    const KUNCI_ENDPOINT_LOGIN_CEPAT = 'pos_endpoint_login_cepat';
+    const JEDA_ENDPOINT_MULAI_MS = 350; // endpoint kedua menyusul setelah jeda ini
+
+    function catatEndpointLoginTercepat(adalahCadangan) {
+      try {
+        localStorage.setItem(KUNCI_ENDPOINT_LOGIN_CEPAT, adalahCadangan ? 'cadangan' : 'utama');
+      } catch (e) { }
+    }
+
+    function bacaEndpointLoginTercepat() {
+      try {
+        const v = localStorage.getItem(KUNCI_ENDPOINT_LOGIN_CEPAT);
+        return (v === 'cadangan' || v === 'utama') ? v : null;
+      } catch (e) {
+        return null;
+      }
+    }
+
     function loginParalel(u, p, onSuccess, onError, opsiLogin) {
       // Mode lokal (file:/mock): tidak ada endpoint nyata — jalur mock lama.
       if (typeof isLocalMode !== 'undefined' && isLocalMode) {
@@ -2588,14 +2619,25 @@
 
       let selesai = false;
       const btn = document.getElementById('loginBtn');
-      const selesaikan = (hasil) => {
+      let timerEndpointKedua = null;
+      const batalkanEndpointKedua = () => {
+        if (timerEndpointKedua !== null) {
+          clearTimeout(timerEndpointKedua);
+          timerEndpointKedua = null;
+        }
+      };
+      const selesaikan = (hasil, dariCadangan) => {
         if (selesai) return;
         selesai = true;
+        batalkanEndpointKedua();
+        // v92: catat pemenang — login berikutnya mulai dari endpoint ini.
+        catatEndpointLoginTercepat(dariCadangan);
         onSuccess(hasil);
       };
       const gagal = (pesan) => {
         if (selesai) return;
         selesai = true;
+        batalkanEndpointKedua();
         onError(new Error(pesan));
       };
       let tersisa = 2; // endpoint yang belum menjawab SUKSES/GAGAL final
@@ -2621,16 +2663,26 @@
             const payload = JSON.parse(text);
             if (payload.status === 'error') throw new Error(payload.message || 'Permintaan ke server gagal.');
             resetHtmlGagal();
-            selesaikan(payload.data !== undefined ? payload.data : payload);
+            selesaikan(payload.data !== undefined ? payload.data : payload, adalahCadangan);
           } catch (e) {
             selesaiSalah();
           }
         })();
       };
 
-      kirim(API_URL, false);
-      kirim(urlCadangan, true);
-      console.log('[POS] LOGIN PARALEL dikirim ke 2 endpoint — jawaban tercepat menang');
+      // v92: mulai dari endpoint tercepat tercatat (default: utama bila tanpa
+      // catatan); endpoint satunya menyusul sebagai penutup — kegagalan satu
+      // endpoint tetap otomatis tertutup endpoint satunya.
+      const mulaiDariCadangan = bacaEndpointLoginTercepat() === 'cadangan';
+      if (mulaiDariCadangan) kirim(urlCadangan, true);
+      else kirim(API_URL, false);
+      timerEndpointKedua = setTimeout(function () {
+        timerEndpointKedua = null;
+        if (mulaiDariCadangan) kirim(API_URL, false);
+        else kirim(urlCadangan, true);
+      }, JEDA_ENDPOINT_MULAI_MS);
+      console.log('[POS] LOGIN PARALEL mulai dari endpoint ' + (mulaiDariCadangan ? 'CADANGAN' : 'UTAMA') +
+        ' (tercepat tercatat) — endpoint kedua menyusul ' + JEDA_ENDPOINT_MULAI_MS + ' ms; jawaban tercepat menang');
     }
 
     function login() {

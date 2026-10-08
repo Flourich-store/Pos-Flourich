@@ -275,6 +275,111 @@ r.suite('Login paralel: mode lokal tetap lewat mock (tanpa fetch nyata)', () => 
     r.assertOk(checkLoginTerpanggil, 'mock checkLogin dipakai di mode lokal');
     r.assertOk(!fetchTerpanggil, 'fetch nyata tidak dipanggil di mode lokal');
     r.assertEq(stokProduk(sk.app, '1'), 50, 'alur login sukses berjalan normal via mock');
+  });});
+
+// ============================================================
+// v92: endpoint start pintar pada loginParalel (hanya mode produksi)
+// ============================================================
+
+/**
+ * Muat frontend dengan protocol https: SEJAK AWAL sehingga isLocalMode=false
+ * dan loginParalel memakai jalur paralel nyata (fetch dari sandbox).
+ * fetchStub(url, opts) dipasang sebagai `fetch` dan merekam panggilan.
+ */
+function loadParalelSkenario(fetchStub) {
+  const dom = createDomStub();
+  dom.window.location.protocol = 'https:'; // sebelum load: isLocalMode=false
+  const app = loadFrontend(dom); // tanpa payload -> blok mock https: tidak dipakai
+
+  const panggilan = [];
+  app.sandbox.fetch = function (url, opts) {
+    panggilan.push({ url: String(url), method: (opts && opts.method) || 'GET' });
+    return fetchStub(url, opts, panggilan.length);
+  };
+  return { dom, app, panggilan };
+}
+
+const ID_UTAMA = 'AKfycbyQlMr';      // awal ID endpoint utama di API_URL
+const ID_CADANGAN = 'AKfycbzrk5';    // awal ID endpoint cadangan di API_URL_CADANGAN
+
+const JAWABAN_LOGIN = JSON.stringify({
+  status: true,
+  username: 'admin',
+  role: 'SUPER_ADMIN',
+  dataAwal: { produk: [['id', 'nama', 'stok', 'harga', 'foto_url'], ['1', 'Semangci 250 ml', 50, 15000, '']], penjualan: [], timestamp: 1 }
+});
+
+function balasanOk() {
+  return Promise.resolve({ ok: true, status: 200, text: () => Promise.resolve(JAWABAN_LOGIN) });
+}
+
+r.suite('v92 endpoint start pintar: catatan tercepat menjadi jalur mulai login', () => {
+
+  r.test('login sukses via endpoint utama -> localStorage mencatat "utama"', async () => {
+    const { dom, app } = loadParalelSkenario((url) => {
+      if (url.indexOf(ID_UTAMA) !== -1) return balasanOk(); // utama sukses
+      return Promise.reject(new TypeError('Failed to fetch')); // cadangan gagal
+    });
+
+    let sukses = null;
+    app.call('loginParalel', 'admin', 'password', (h) => { sukses = h; }, () => { });
+    await new Promise(s => setTimeout(s, 10)); // beri waktu mikrotask
+
+    r.assertEq(sukses && sukses.status, true, 'login sukses via utama');
+    r.assertEq(dom.localStorage.getItem('pos_endpoint_login_cepat'), 'utama', 'pemenang tercatat = utama');
+  });
+
+  r.test('login sukses via endpoint cadangan -> localStorage mencatat "cadangan"', async () => {
+    const { dom, app } = loadParalelSkenario((url) => {
+      if (url.indexOf(ID_CADANGAN) !== -1) return balasanOk(); // cadangan sukses
+      return Promise.reject(new TypeError('Failed to fetch')); // utama gagal
+    });
+
+    let sukses = null;
+    app.call('loginParalel', 'admin', 'password', (h) => { sukses = h; }, () => { });
+    await new Promise(s => setTimeout(s, 10));
+
+    r.assertEq(sukses && sukses.status, true, 'login sukses via cadangan');
+    r.assertEq(dom.localStorage.getItem('pos_endpoint_login_cepat'), 'cadangan', 'pemenang tercatat = cadangan');
+  });
+
+  r.test('tanpa catatan: jalur mulai = endpoint UTAMA, cadangan menyusul', () => {
+    const { dom, app, panggilan } = loadParalelSkenario(() => new Promise(() => { })); // tidak pernah menjawab
+
+    app.call('loginParalel', 'admin', 'password', () => { }, () => { });
+
+    // Stub setTimeout eksekusi sinkron utk jeda <=5 dtk, jadi kedua kirim
+    // sudah tercatat berurutan saat loginParalel kembali.
+    r.assertEq(panggilan.length, 2, '2 endpoint dikirim');
+    r.assertOk(panggilan[0].url.indexOf(ID_UTAMA) !== -1, 'yang pertama = endpoint utama');
+    r.assertOk(panggilan[1].url.indexOf(ID_CADANGAN) !== -1, 'yang kedua = endpoint cadangan');
+    r.assertEq(dom.localStorage.getItem('pos_endpoint_login_cepat'), null, 'belum ada catatan');
+  });
+
+  r.test('dengan catatan "cadangan": jalur mulai = endpoint CADANGAN, utama menyusul', () => {
+    const { dom, app, panggilan } = loadParalelSkenario(() => new Promise(() => { })); // tidak pernah menjawab
+    dom.localStorage.setItem('pos_endpoint_login_cepat', 'cadangan'); // catatan dari login sukses sebelumnya
+
+    app.call('loginParalel', 'admin', 'password', () => { }, () => { });
+
+    r.assertEq(panggilan.length, 2, '2 endpoint dikirim');
+    r.assertOk(panggilan[0].url.indexOf(ID_CADANGAN) !== -1, 'yang pertama = endpoint cadangan (tercepat tercatat)');
+    r.assertOk(panggilan[1].url.indexOf(ID_UTAMA) !== -1, 'yang kedua = endpoint utama (penutup)');
+  });
+
+  r.test('endpoint mulai gagal -> endpoint kedua tetap menutup (failover utuh)', async () => {
+    const { dom, app } = loadParalelSkenario((url) => {
+      if (url.indexOf(ID_CADANGAN) !== -1) return Promise.reject(new TypeError('Failed to fetch')); // mulai: gagal
+      return balasanOk(); // penutup: sukses
+    });
+    dom.localStorage.setItem('pos_endpoint_login_cepat', 'cadangan');
+
+    let sukses = null;
+    app.call('loginParalel', 'admin', 'password', (h) => { sukses = h; }, () => { });
+    await new Promise(s => setTimeout(s, 10));
+
+    r.assertEq(sukses && sukses.status, true, 'login tetap sukses lewat endpoint penutup');
+    r.assertEq(dom.localStorage.getItem('pos_endpoint_login_cepat'), 'utama', 'catatan diperbarui ke pemenang baru (utama)');
   });
 
 });
