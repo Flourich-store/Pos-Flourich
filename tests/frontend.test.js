@@ -123,12 +123,13 @@ r.suite('Frontend — checkout() alur normal', () => {
     r.assertEq(dom.alerts.length, 0, 'tidak boleh ada alert error');
   });
 
-  r.test('checkout QRIS sukses tanpa input bayar', () => {
+  r.test('checkout QRIS sukses tanpa input bayar (v93: lewat modal QRIS dulu)', () => {
     const { dom, app } = siapkanAplikasi(RESPON_VALID);
     isiKeranjang(app);
     dom.window.__elements.selMetode.value = 'QRIS';
 
-    app.call('checkout');
+    app.call('checkout');     // v93: QRIS -> modal QRIS tampil dulu
+    app.call('konfirmasiQrisDibayar'); // kasir tekan "Sudah Dibayar" -> alur asli
 
     r.assertEq(app.get('cart').length, 0, 'keranjang kosong');
     r.assertEq(dom.alerts.length, 0, 'tidak ada alert error');
@@ -358,8 +359,8 @@ r.suite('Grup B — badge metode & label versi 13 kolom (v86)', () => {
     const { app } = siapkanAplikasi(RESPON_VALID);
     const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
     const meta = (html.match(/<meta name="app-version" content="(\d+)"/) || [])[1];
-    r.assertEq(meta, '92', 'meta app-version = 92');
-    r.assertEq(app.get('VERSI_HTML'), 92, 'VERSI_HTML = 92');
+    r.assertEq(meta, '93', 'meta app-version = 93');
+    r.assertEq(app.get('VERSI_HTML'), 93, 'VERSI_HTML = 93');
     // Invariant yang disebut di komentar meta: keduanya HARUS dinaikkan bersama.
     // Kalau tidak sinkron, self-check auto-reload salah arah dan kasir
     // terjebak di HTML lama atau reload berulang.

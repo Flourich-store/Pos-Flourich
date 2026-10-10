@@ -85,7 +85,8 @@ r.suite('Checkout mengurangi stok (optimistic + sinkron server)', () => {
       { id: '2', nama: 'Wonapel 250 ml', jumlah: 3, total: 42000 }
     ]);
     dom.window.__elements.selMetode.value = 'QRIS';
-    app.call('checkout');
+    app.call('checkout');              // v93: modal QRIS dulu utk QRIS
+    app.call('konfirmasiQrisDibayar'); // lalu alur asli berjalan
 
     r.assertEq(stokProduk(app, '1'), 48, 'stok produk 1 berkurang 2');
     r.assertEq(stokProduk(app, '2'), 27, 'stok produk 2 berkurang 3');
@@ -114,7 +115,8 @@ r.suite('Checkout mengurangi stok (optimistic + sinkron server)', () => {
 
     app.set('cart', [{ id: '1', nama: 'Semangci 250 ml', jumlah: 999, total: 999 * 15000 }]);
     dom.window.__elements.selMetode.value = 'QRIS';
-    app.call('checkout');
+    app.call('checkout');              // v93: modal QRIS dulu utk QRIS
+    app.call('konfirmasiQrisDibayar'); // lalu alur asli berjalan
 
     r.assertEq(stokProduk(app, '1'), 50, 'stok tidak berubah saat checkout gagal');
     r.assertEq(dom.alerts.length, 1, 'alert kegagalan muncul');

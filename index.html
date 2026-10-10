@@ -9,7 +9,7 @@
   <!-- Penanda versi halaman: dipakai self-check di blok script bawah untuk
        auto-reload bila browser mobile masih menyimpan HTML lama (GitHub Pages
        meng-cache 10 menit). Naikkan BERSAMAAN dengan VERSI_HTML tiap rilis. -->
-  <meta name="app-version" content="92">
+  <meta name="app-version" content="93">
 
   <link rel="icon" type="image/png" sizes="192x192"
     href="https://lh3.googleusercontent.com/d/1kbCU9E4sSQTdBylR24DFnRvsX1cAT">
@@ -1036,6 +1036,50 @@
       font-size: 13.5px;
     }
 
+    /* ============================================================
+       Modal QRIS (v93): QR statis dibesarkan penuh via crop CSS —
+       file qris-flourich.png (874x1240) tidak diubah; frame hanya
+       menampilkan area QR poster saja agar mudah discan HP.
+       ============================================================ */
+    .qris-img-frame {
+      width: 100%;
+      max-width: 300px;
+      aspect-ratio: 1 / 1;
+      margin: 2px auto 12px;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: #fff;
+    }
+
+    .qris-img-frame img {
+      /* Dikalibrasi via analisis pixel (transisi BW): QR di x240-660,
+         y380-830 dari poster 874x1240. Crop persegi x210-690 / y365-845
+         (quiet zone ~15px) -> skala 300/480 = 62.5%: width 546px = 182%
+         dari frame 300px; geser ke x210 (=-44%) dan y365 (=-76%). */
+      width: 182%;
+      height: auto;
+      display: block;
+      margin-left: -44%;
+      margin-top: -76%;
+      image-rendering: pixelated;
+    }
+
+    .qris-total {
+      font-size: 28px;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      color: var(--ink);
+      margin: 8px 0 2px;
+    }
+
+    .qris-hint {
+      font-size: 12.5px;
+      color: var(--muted);
+      line-height: 1.5;
+      margin: 6px 0 14px;
+    }
+
     .modal-close {
       position: absolute;
       top: 14px;
@@ -1983,7 +2027,7 @@
     // berkurang setelah checkout" di HP: perangkat menjalankan kode tua tanpa
     // sadar. Bila versi di server lebih baru dari versi yang berjalan, muat
     // ulang SEKALI otomatis. Penanda versi = <meta name="app-version">.
-    const VERSI_HTML = 92;
+    const VERSI_HTML = 93;
     function periksaVersiHalaman() {
       try {
         if (window.location.protocol === 'file:') return; // mode lokal: tidak relevan
@@ -3518,6 +3562,36 @@
       }
     }
 
+    // ===== Modal QRIS (v93) — intersepsi SEBELUM checkout asli berjalan =====
+    // CASH sama sekali tidak menyentuh fungsi-fungsi ini. Alur checkout asli
+    // tidak diubah: tombol "Sudah Dibayar" memanggil ulang checkout() apa
+    // adanya (confirm, lock tombol, koneksiId, antrian offline, struk).
+    // Flag qrisSudahDibayar: dibuat TRUE oleh tombol "Sudah Dibayar" agar
+    // panggilan ulang checkout() dari modal MELEWATI intersepsi (tidak
+    // pernah berputar kembali ke modal). Reset saat modal dibuka lagi.
+    let qrisSudahDibayar = false;
+
+    function tampilkanModalQris() {
+      const total = (Array.isArray(cart) ? cart : []).reduce(function (s, it) {
+        return s + Number(it && it.total || 0);
+      }, 0);
+      document.getElementById('qrisTotalAmount').textContent =
+        'Rp ' + total.toLocaleString('id-ID');
+      document.getElementById('qrisModal').classList.remove('hidden');
+    }
+
+    function tutupModalQris() {
+      document.getElementById('qrisModal').classList.add('hidden');
+      // Keranjang utuh, transaksi TIDAK tercatat — cukup tutup modal.
+    }
+
+    function konfirmasiQrisDibayar() {
+      document.getElementById('qrisModal').classList.add('hidden');
+      qrisSudahDibayar = true;
+      checkout(); // Jalur checkout asli --- tidak diubah.
+      qrisSudahDibayar = false;
+    }
+
     function checkout() {
       if (!Array.isArray(cart)) cart = []; // fallback aman jika cart tercemar nilai non-array
       if (cart.length === 0) return alert('Keranjang belanja masih kosong!');
@@ -3533,6 +3607,17 @@
       if (metode === 'CASH') {
         uangDibayar = Number(document.getElementById('inpBayar').value);
         if (isNaN(uangDibayar) || uangDibayar <= 0) return alert('Masukkan nominal pembayaran.');
+      }
+
+      // Modal QRIS (v93): intersepsi tampil QR SEBELUM proses transaksi asli.
+      // Tunai melewati baris ini tanpa efek. Tombol "Sudah Dibayar" lalu
+      // memanggil ulang checkout() --- alur asli (lock, koneksiId, antrian,
+      // struk) tidak pernah diubah; klik-ganda "Sudah Dibayar" aman karena
+      // modal tertutup sebelum checkout kedua tereksekusi, dan proteksi
+      // dobel-klik tombol PROSES TRANSAKSI yang sudah ada tetap berlaku.
+      if (metode === 'QRIS' && !qrisSudahDibayar) {
+        tampilkanModalQris();
+        return;
       }
 
       if (document.activeElement) document.activeElement.blur();
@@ -3851,6 +3936,32 @@ Terima kasih atas kunjungan Anda!
       }
     }
   </script>
+
+  <!-- Modal QRIS (v93): tampil saat kasir pilih QRIS lalu PROSES TRANSAKSI.
+       Batal = tutup modal (keranjang utuh, tidak ada transaksi tercatat).
+       Sudah Dibayar = lanjut ke alur checkout asli (tidak diubah). -->
+  <div id="qrisModal" class="modal hidden">
+    <div class="modal-box" style="max-width: 340px;">
+      <button type="button" class="modal-close" onclick="tutupModalQris()" aria-label="Batal">
+        <svg class="ic" aria-hidden="true"><use href="#icon-xmark"/></svg>
+      </button>
+      <h2 class="modal-title">Pembayaran QRIS</h2>
+      <div class="qris-total" id="qrisTotalAmount">Rp 0</div>
+      <div class="qris-img-frame">
+        <img src="qris-flourich.png" alt="QRIS statis Flourich NMID ID1026487351649 A01" />
+      </div>
+      <p class="qris-hint">
+        Pelanggan scan lalu ketik nominal sesuai total.<br />
+        Pastikan notifikasi pembayaran masuk di aplikasi merchant.
+      </p>
+      <button type="button" class="btn-checkout" style="margin-top:0;" onclick="konfirmasiQrisDibayar()">
+        <svg class="ic" aria-hidden="true"><use href="#icon-circle-check"/></svg> Sudah Dibayar
+      </button>
+      <button type="button" class="btn-logout" style="width: 100%; margin-top: 10px;" onclick="tutupModalQris()">
+        Batal
+      </button>
+    </div>
+  </div>
 
   <!-- Modal Sukses Checkout -->
   <div id="successModal" class="modal hidden">
