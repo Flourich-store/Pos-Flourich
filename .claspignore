@@ -9,3 +9,6 @@ package*.json
 .opencode/**
 *.png
 qris-flourich.png
+manifest.json
+sw.js
+icons/**

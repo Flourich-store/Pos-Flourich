@@ -4,18 +4,20 @@
 <head>
   <base target="_top">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#0d8a63">
   <title>Flou Rich POS</title>
+  <link rel="manifest" href="./manifest.json">
 
   <!-- Penanda versi halaman: dipakai self-check di blok script bawah untuk
        auto-reload bila browser mobile masih menyimpan HTML lama (GitHub Pages
        meng-cache 10 menit). Naikkan BERSAMAAN dengan VERSI_HTML tiap rilis. -->
-  <meta name="app-version" content="93">
+  <meta name="app-version" content="94">
 
   <link rel="icon" type="image/png" sizes="192x192"
     href="https://lh3.googleusercontent.com/d/1kbCU9E4sSQTdBylR24DFnRvsX1cAT">
   <link rel="icon" type="image/png" href="flourich_logo.png">
   <link rel="apple-touch-icon" sizes="192x192"
-    href="https://lh3.googleusercontent.com/d/1kbCU9E4sSQTdBylR24DFnRvsX1cAT">
+    href="./icons/icon-192.png">
 
   <!-- Google Fonts: Plus Jakarta Sans -->
   <link rel="preconnect" href="https://fonts.googleapis.com">    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -2027,7 +2029,7 @@
     // berkurang setelah checkout" di HP: perangkat menjalankan kode tua tanpa
     // sadar. Bila versi di server lebih baru dari versi yang berjalan, muat
     // ulang SEKALI otomatis. Penanda versi = <meta name="app-version">.
-    const VERSI_HTML = 93;
+    const VERSI_HTML = 94;
     function periksaVersiHalaman() {
       try {
         if (window.location.protocol === 'file:') return; // mode lokal: tidak relevan
@@ -4005,6 +4007,18 @@ Terima kasih atas kunjungan Anda!
     </div>
   </div>
 
+  <script>
+    if ('serviceWorker' in navigator &&
+        window.location.hostname === 'flourich-store.github.io' &&
+        window.location.pathname.startsWith('/Pos-Flourich/')) {
+      window.addEventListener('load', function () {
+        navigator.serviceWorker.register('./sw.js', { scope: './' })
+          .catch(function (error) {
+            console.warn('[PWA] Registrasi service worker dilewati:', error);
+          });
+      });
+    }
+  </script>
 </body>
 
 </html>
