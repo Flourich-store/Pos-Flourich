@@ -12,3 +12,6 @@ qris-flourich.png
 manifest.json
 sw.js
 icons/**
+playwright.config.js
+playwright-report/**
+test-results/**
