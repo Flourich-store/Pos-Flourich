@@ -14,8 +14,8 @@ test('TC-AUTH-01: Login Kasir Berhasil', async ({ page }) => {
   await page.getByPlaceholder('Password').fill(LOGIN_PASSWORD);
   await page.getByRole('button', { name: 'MASUK' }).click();
 
-  // Validasi: Tombol Logout muncul di dashboard
-  await expect(page.getByRole('button', { name: 'Logout' })).toBeVisible({ timeout: 10000 });
+  // Validasi: Tombol Keluar (logout) muncul di dashboard
+  await expect(page.getByRole('button', { name: 'Keluar' })).toBeVisible({ timeout: 10000 });
 });
 
 // ==========================================
