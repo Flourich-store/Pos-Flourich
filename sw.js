@@ -1,7 +1,7 @@
 'use strict';
 
 const CACHE_PREFIX = 'flourich-pos-';
-const CACHE_NAME = 'flourich-pos-v94';
+const CACHE_NAME = 'flourich-pos-v95';
 const APP_ROOT = new URL('./', self.registration.scope);
 const APP_URL = APP_ROOT.href;
 const APP_PATH = APP_ROOT.pathname;

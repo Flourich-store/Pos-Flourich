@@ -282,7 +282,7 @@ async function runServiceWorkerTests() {
     ));
     assert.strictEqual(response.body, 'fresh-html');
     assert.strictEqual(worker.fetchCalls[0].options.cache, 'no-store');
-    const cached = await worker.caches.get('flourich-pos-v94').get(
+    const cached = await worker.caches.get('flourich-pos-v95').get(
       'https://flourich-store.github.io/Pos-Flourich/'
     );
     assert.strictEqual(cached.body, 'fresh-html');
@@ -292,8 +292,8 @@ async function runServiceWorkerTests() {
     const worker = createWorkerHarness();
     const cache = await (async () => {
       const local = worker.caches;
-      if (!local.has('flourich-pos-v94')) local.set('flourich-pos-v94', new Map());
-      return local.get('flourich-pos-v94');
+      if (!local.has('flourich-pos-v95')) local.set('flourich-pos-v95', new Map());
+      return local.get('flourich-pos-v95');
     })();
     cache.set('https://flourich-store.github.io/Pos-Flourich/', createResponse('offline-html'));
     worker.setFetchImplementation(async () => {
@@ -309,10 +309,10 @@ async function runServiceWorkerTests() {
     const worker = createWorkerHarness();
     worker.caches.set('flourich-pos-v93', new Map());
     worker.caches.set('unrelated-cache', new Map());
-    worker.caches.set('flourich-pos-v94', new Map());
+    worker.caches.set('flourich-pos-v95', new Map());
     await worker.dispatchActivate();
     assert.deepStrictEqual([...worker.caches.keys()].sort(), [
-      'flourich-pos-v94',
+      'flourich-pos-v95',
       'unrelated-cache'
     ]);
     assert.strictEqual(worker.claimCalls, 1);
@@ -321,8 +321,8 @@ async function runServiceWorkerTests() {
   await testAsync('QR uses network-first and replaces its cached copy when online', async () => {
     const worker = createWorkerHarness();
     const cache = await (async () => {
-      if (!worker.caches.has('flourich-pos-v94')) worker.caches.set('flourich-pos-v94', new Map());
-      return worker.caches.get('flourich-pos-v94');
+      if (!worker.caches.has('flourich-pos-v95')) worker.caches.set('flourich-pos-v95', new Map());
+      return worker.caches.get('flourich-pos-v95');
     })();
     const qrUrl = 'https://flourich-store.github.io/Pos-Flourich/qris-flourich.png';
     cache.set(qrUrl, createResponse('old-qr'));
@@ -347,9 +347,9 @@ async function runServiceWorkerTests() {
     });
     await worker.dispatchInstall();
     assert.strictEqual(worker.skipWaitingCalls, 1);
-    assert.ok(worker.caches.has('flourich-pos-v94'));
+    assert.ok(worker.caches.has('flourich-pos-v95'));
     assert.strictEqual(
-      worker.caches.get('flourich-pos-v94').get('https://flourich-store.github.io/Pos-Flourich/').body,
+      worker.caches.get('flourich-pos-v95').get('https://flourich-store.github.io/Pos-Flourich/').body,
       'precached-html'
     );
   });
@@ -357,8 +357,8 @@ async function runServiceWorkerTests() {
   await testAsync('static icons and logo are cache-first', async () => {
     const worker = createWorkerHarness();
     const cache = await (async () => {
-      if (!worker.caches.has('flourich-pos-v94')) worker.caches.set('flourich-pos-v94', new Map());
-      return worker.caches.get('flourich-pos-v94');
+      if (!worker.caches.has('flourich-pos-v95')) worker.caches.set('flourich-pos-v95', new Map());
+      return worker.caches.get('flourich-pos-v95');
     })();
     const iconUrl = 'https://flourich-store.github.io/Pos-Flourich/icons/icon-192.png';
     cache.set(iconUrl, createResponse('cached-icon'));
@@ -369,8 +369,8 @@ async function runServiceWorkerTests() {
 
   await testAsync('HTTP error responses do not trigger stale navigation fallback', async () => {
     const worker = createWorkerHarness();
-    if (!worker.caches.has('flourich-pos-v94')) worker.caches.set('flourich-pos-v94', new Map());
-    worker.caches.get('flourich-pos-v94').set(
+    if (!worker.caches.has('flourich-pos-v95')) worker.caches.set('flourich-pos-v95', new Map());
+    worker.caches.get('flourich-pos-v95').set(
       'https://flourich-store.github.io/Pos-Flourich/',
       createResponse('stale-html')
     );
