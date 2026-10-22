@@ -7,3 +7,6 @@ node_modules/
 /blob-report/
 /playwright/.cache/
 /playwright/.auth/
+
+# Screenshot verifikasi lokal (regenerable via npx playwright screenshot)
+/screenshots/
