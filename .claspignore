@@ -1,5 +1,6 @@
 local_test_*.html
 tests/**
+tools/**
 node_modules/**
 *.md
 .git/**

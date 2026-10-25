@@ -1929,6 +1929,14 @@
             <input type="date" id="filterEndDate">
           </div>
           <div class="filter-group">
+            <label>Metode Pembayaran</label>
+            <select id="filterMetode">
+              <option value="">Semua</option>
+              <option value="CASH">Tunai (Cash)</option>
+              <option value="QRIS">QRIS / Transfer Bank</option>
+            </select>
+          </div>
+          <div class="filter-group">
             <label>Pencarian</label>
             <input type="text" id="filterSearch" placeholder="Cari ID atau Produk...">
           </div>
@@ -2089,13 +2097,18 @@
     function adalahKegagalanJaringan(error) {
       const nama = error && error.name ? String(error.name) : '';
       const pesan = error && error.message ? String(error.message) : '';
-      return nama === 'AbortError' || nama === 'TypeError' || nama === 'GserveHtml' ||
-        pesan === 'Failed to fetch' || pesan === 'Load failed' ||
-        pesan === 'NetworkError when attempting to fetch resource.' ||
-        // Error ramah hasil retry apiRequest (nama Error asli hilang lewat
-        // safeGoogleRun) — tetap kegagalan jaringan: layak masuk antrian offline.
-        pesan.indexOf('Koneksi ke server terputus') === 0 ||
-        pesan.indexOf('Koneksi ke server tidak tersedia') === 0;
+      if (nama === 'AbortError' || nama === 'TypeError' || nama === 'GserveHtml') return true;
+      if (pesan === 'Failed to fetch' || pesan === 'Load failed' ||
+        pesan === 'NetworkError when attempting to fetch resource.') return true;
+      // Error ramah hasil retry apiRequest (nama Error asli hilang lewat
+      // safeGoogleRun) — tetap kegagalan jaringan: layak masuk antrian offline.
+      if (pesan.indexOf('Koneksi ke server terputus') === 0 ||
+        pesan.indexOf('Koneksi ke server tidak tersedia') === 0) return true;
+      // Error sistem dari server (exception tak terduga) bisa bersifat transien
+      // (lock/Spreadsheet) — perlakukan sebagai kegagalan jaringan agar antrian
+      // offline tetap di-retry, bukan dibuang diam-diam.
+      if (pesan.indexOf('Error sistem:') === 0) return true;
+      return false;
     }
 
     async function apiRequest(action, args = [], koneksiId = null, trueSync = false, opsi = {}) {
@@ -3286,6 +3299,8 @@
     function applyFilter(resetPage = true) {
       const startInput = document.getElementById('filterStartDate').value;
       const endInput = document.getElementById('filterEndDate').value;
+      const metodeInputElem = document.getElementById('filterMetode');
+      const metodeInput = metodeInputElem ? metodeInputElem.value : '';
       const searchInputElem = document.getElementById('filterSearch');
       const searchInput = searchInputElem ? searchInputElem.value.toLowerCase() : '';
 
@@ -3337,6 +3352,14 @@
           }
         }
 
+        let isValidMetode = true;
+        if (metodeInput) {
+          const rowMetode = String(row[7] || '').toUpperCase().trim();
+          if (rowMetode !== metodeInput) {
+            isValidMetode = false;
+          }
+        }
+
         let isValidSearch = true;
         if (searchInput) {
           const idTx = String(row[0] || '').toLowerCase();
@@ -3346,7 +3369,7 @@
           }
         }
 
-        return isValidDate && isValidSearch;
+        return isValidDate && isValidMetode && isValidSearch;
       });
 
       if (resetPage) currentPage = 1;
@@ -3356,6 +3379,8 @@
     function resetFilter() {
       document.getElementById('filterStartDate').value = '';
       document.getElementById('filterEndDate').value = '';
+      const metodeInputElem = document.getElementById('filterMetode');
+      if (metodeInputElem) metodeInputElem.value = '';
       const searchInputElem = document.getElementById('filterSearch');
       if (searchInputElem) searchInputElem.value = '';
       applyFilter(true);

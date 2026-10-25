@@ -1092,6 +1092,53 @@ function prosesCheckoutInti(cart, metode, uangDibayar, requestData) {
 }
 
 /**
+ * Tambah penjualan manual (untuk mengembalikan transaksi yang hilang).
+ * Tidak mengurangi stok. Untuk digunakan di Apps Script editor.
+ */
+function tambahPenjualanManual(namaProduk, jumlah, totalHarga, metode, tanggalStr, idTransaksi) {
+  try {
+    const lock = LockService.getScriptLock();
+    lock.waitLock(10000);
+    try {
+      const ss = getSpreadsheet();
+      const shPenjualan = ss.getSheetByName("Penjualan");
+      if (!shPenjualan) {
+        return { status: 'error', message: 'Sheet Penjualan tidak ditemukan' };
+      }
+      const petaJual = petaKolomPenjualanSheet(shPenjualan);
+      const transaksi = idTransaksi || ('FR-MANUAL-' + new Date().getTime());
+      const tanggal = tanggalStr || Utilities.formatDate(new Date(), ss.getSpreadsheetTimeZone(), 'dd/MM/yyyy HH:mm');
+      const barisPenjualan = [susunBarisKolom({
+        id: transaksi,
+        tanggal: tanggal,
+        namaProduk: namaProduk || 'Manual Entry',
+        volumeMl: '',
+        hppSatuan: '',
+        jumlah: Number(jumlah) || 1,
+        totalHarga: Number(totalHarga) || 0,
+        metode: String(metode || 'QRIS').toUpperCase(),
+        uangDibayar: Number(totalHarga) || 0,
+        uangKembali: 0,
+        modal: '',
+        biayaOperasional: 0,
+        labaBersih: ''
+      }, petaJual)];
+      const lastRowJual = shPenjualan.getLastRow();
+      shPenjualan
+        .getRange(lastRowJual + 1, 1, barisPenjualan.length, barisPenjualan[0].length)
+        .setValues(barisPenjualan);
+      buangCacheAwal();
+      return { status: 'success', transaksi: transaksi, tanggal: tanggal };
+    } finally {
+      lock.releaseLock();
+    }
+  } catch (err) {
+    return { status: 'error', message: 'Error: ' + err.toString() };
+  }
+}
+
+
+/**
  * Pembersih kunci idempotensi tua. PropertiesService di GAS punya batas total
  * (~9KB/properti, 500KB total) — biarkan menumpuk lama-lama memperlambat & bisa
  * penuh. Kunci dianggap kedaluwarsa setelah 24 jam (jendela aman kirim ulang
