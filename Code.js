@@ -979,31 +979,89 @@ function prosesCheckoutInti(cart, metode, uangDibayar, requestData) {
         };
       }
 
-      const barisPenjualan = validatedItems.map(item => {
-        // P3: HPP tak terbaca -> HPP Satuan, Modal, dan Laba Bersih ditulis
-        // KOSONG (bukan 0) sebagai penanda, supaya tidak terlihat seperti data
-        // yang dihitung benar. Transaksi tetap boleh diselesaikan.
-        const hppTerbaca = item.hppTerbaca === true;
-        const totalModalNum = item.modalSatuan * item.jumlah;
-        const totalModal = hppTerbaca ? totalModalNum : '';
-        const biayaOperasional = 0;
-        const labaBersih = hppTerbaca ? item.totalHarga - totalModalNum - biayaOperasional : '';
-        return susunBarisKolom({
-          id: transaksi,
-          tanggal: tanggal,
-          namaProduk: item.nama,
+      // SATU CHECKOUT = SATU BARIS di sheet Penjualan.
+      // Versi lama menulis satu baris PER PRODUK dengan kolom Uang Dibayar &
+      // Uang Kembali berisi total transaksi di SETIAP baris, sehingga checkout
+      // 1x Semangci 250 ml + 2x Semangci 350 ml tampak seperti dua transaksi
+      // dan kolom pembayarannya dobel bila dijumlah. Sekarang seluruh item
+      // digabung ke satu baris: Nama Produk memuat daftar "produk (qty)",
+      // Jumlah = total qty, Total Harga/Modal/Laba Bersih = total transaksi.
+      // Produk yang sama muncul beberapa kali di cart tetap digabung qty-nya.
+      const ringkasanPerProduk = new Map(); // id produk -> ringkasan baris
+      for (const item of validatedItems) {
+        const ada = ringkasanPerProduk.get(item.id);
+        if (ada) {
+          ada.jumlah += item.jumlah;
+          ada.totalHarga += item.totalHarga;
+          if (!item.hppTerbaca) ada.hppTerbaca = false;
+          continue;
+        }
+        ringkasanPerProduk.set(item.id, {
+          nama: item.nama,
           volumeMl: item.volumeMl,
-          hppSatuan: hppTerbaca ? item.modalSatuan : '',
+          modalSatuan: item.modalSatuan,
+          hppTerbaca: item.hppTerbaca === true,
           jumlah: item.jumlah,
-          totalHarga: item.totalHarga,
-          metode: metode,
-          uangDibayar: finalBayar,
-          uangKembali: uangKembali,
-          modal: totalModal,
-          biayaOperasional: biayaOperasional,
-          labaBersih: labaBersih
-        }, petaJual);
-      });
+          totalHarga: item.totalHarga
+        });
+      }
+      const produkRingkas = Array.from(ringkasanPerProduk.values());
+      const satuProduk = produkRingkas.length === 1;
+
+      // Transaksi satu produk tetap memakai nama polos (qty sudah ada di
+      // kolom Jumlah) agar laporan per produk tidak berubah. Hanya transaksi
+      // campuran yang perlu daftar "produk (qty)" pada satu sel.
+      const namaProdukGabungan = satuProduk
+        ? produkRingkas[0].nama
+        : produkRingkas
+          .map(p => (Number(p.jumlah) > 1 ? p.nama + ' (' + p.jumlah + ')' : p.nama))
+          .join(', ');
+
+      const totalJumlah = produkRingkas.reduce((s, p) => s + (Number(p.jumlah) || 0), 0);
+
+      // Volume (ml): satuan botol. Transaksi satu produk tetap ditulis volume
+      // botolnya (perilaku lama, mis. 350). Transaksi CAMPURAN tidak punya satu
+      // ukuran botol, jadi yang ditulis adalah TOTAL ml yang keluar di transaksi
+      // itu (mis. 1x250 + 2x350 = 950) — angka yang benar-benar terpakai, bukan
+      // angka karangan. Bila ada produk tanpa volume terbaca, totalnya tidak
+      // lengkap sehingga dikosongkan daripada menyesatkan.
+      const semuaVolumeTerbaca = produkRingkas.every(p => Number(p.volumeMl) > 0);
+      const totalVolumeMl = produkRingkas.reduce(function (s, p) {
+        const v = Number(p.volumeMl);
+        const q = Number(p.jumlah) || 0;
+        return s + (Number.isFinite(v) && v > 0 ? v * q : 0);
+      }, 0);
+
+      // P3: HPP tak terbaca -> HPP Satuan, Modal, dan Laba Bersih ditulis
+      // KOSONG (bukan 0) sebagai penanda, supaya tidak terlihat seperti data
+      // yang dihitung benar. Transaksi tetap boleh diselesaikan.
+      const semuaHppTerbaca = produkRingkas.every(p => p.hppTerbaca === true);
+      const totalModalNum = produkRingkas.reduce((s, p) => s + (p.modalSatuan * p.jumlah), 0);
+      const biayaOperasional = 0;
+      const labaBersih = semuaHppTerbaca ? grandTotal - totalModalNum - biayaOperasional : '';
+
+      // HPP Satuan: per botol. Satu produk -> HPP aslinya. Campuran -> HPP
+      // rata-rata tertimbang (total modal / total qty) supaya "HPP Satuan x
+      // Jumlah = Modal" tetap konsisten dan Modal/Laba tetap angka persis.
+      const hppSatuanBaris = satuProduk
+        ? (produkRingkas[0].hppTerbaca ? produkRingkas[0].modalSatuan : '')
+        : (semuaHppTerbaca && totalJumlah > 0 ? Math.round(totalModalNum / totalJumlah) : '');
+
+      const barisPenjualan = [susunBarisKolom({
+        id: transaksi,
+        tanggal: tanggal,
+        namaProduk: namaProdukGabungan,
+        volumeMl: satuProduk ? produkRingkas[0].volumeMl : (semuaVolumeTerbaca ? totalVolumeMl : ''),
+        hppSatuan: hppSatuanBaris,
+        jumlah: totalJumlah,
+        totalHarga: grandTotal,
+        metode: metode,
+        uangDibayar: finalBayar,
+        uangKembali: uangKembali,
+        modal: semuaHppTerbaca ? totalModalNum : '',
+        biayaOperasional: biayaOperasional,
+        labaBersih: labaBersih
+      }, petaJual)];
 
       const kolomTanpaHeader = barisPenjualan[0].__tanpaKolom || [];
       if (kolomTanpaHeader.length) {

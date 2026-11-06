@@ -99,7 +99,7 @@ r.suite('Backend — prosesCheckout tulis batch (checkout cepat)', () => {
     return { gas, backend, spreadsheet: gas.scriptRuntime.activeSpreadsheet };
   }
 
-  r.test('checkout 2 produk (3 item): hasil identik dengan versi per-item', () => {
+  r.test('checkout 2 produk (3 item): tercatat 1 BARIS transaksi, bukan per item', () => {
     const { backend, spreadsheet } = setup();
 
     const res = backend.prosesCheckout([
@@ -110,7 +110,16 @@ r.suite('Backend — prosesCheckout tulis batch (checkout cepat)', () => {
 
     r.assertEq(res.status, 'success', 'status sukses');
     r.assertEq(res.total, 59000, 'grand total 30000+14000+15000');
-    r.assertEq(spreadsheet.__penjualan.__rows().length, 4, '3 baris penjualan + header');
+    r.assertEq(spreadsheet.__penjualan.__rows().length, 2, 'header + 1 baris transaksi (satu checkout = satu baris)');
+
+    const baris = spreadsheet.__penjualan.__rows()[1];
+    r.assertEq(baris[3], 1000, 'Volume (ml) = total ml transaksi campuran (3x250 + 1x250)');
+    r.assertEq(baris[4], '', 'HPP Satuan kosong karena HPP produk tidak terbaca di fixture ini');
+    r.assertEq(baris[5], 4, 'Jumlah = total qty (2 + 1 + 1)');
+    r.assertEq(baris[6], 59000, 'Total Harga = total transaksi, tidak dobel per item');
+    r.assertIncludes(baris[2], 'Semangci 250 ml (3)', 'produk sama di cart digabung qty-nya');
+    r.assertIncludes(baris[2], 'Wonapel 250 ml', 'produk lain masuk baris yang SAMA');
+
     // Produk 1 terjual 3x (2+1, agregasi per produk): 50 -> 47
     r.assertEq(spreadsheet.__produk.__rows()[1][2], 47, 'stok produk 1 berkurang 3 (agregasi)');
     r.assertEq(spreadsheet.__produk.__rows()[2][2], 29, 'stok produk 2 berkurang 1');
