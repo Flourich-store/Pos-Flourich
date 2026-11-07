@@ -522,11 +522,13 @@ r.suite('Frontend — Mode Switcher & Katalog Grid Produk Foto', () => {
     r.assertEq(dom.localStorage.getItem('pos_product_view_mode'), 'dropdown', 'mode tersimpan dropdown');
     r.assertOk(dom.window.__elements.productGridCatalog.classList.contains('hidden'), 'grid tersembunyi');
     r.assertFalse(dom.window.__elements.productDropdownView.classList.contains('hidden'), 'dropdown tampil');
+    r.assertFalse(dom.window.__elements.stokProdukHariIni.classList.contains('hidden'), 'stok tampil pada mode dropdown');
 
     app.call('switchProductViewMode', 'grid');
     r.assertEq(dom.localStorage.getItem('pos_product_view_mode'), 'grid', 'mode tersimpan grid');
     r.assertFalse(dom.window.__elements.productGridCatalog.classList.contains('hidden'), 'grid tampil');
     r.assertOk(dom.window.__elements.productDropdownView.classList.contains('hidden'), 'dropdown tersembunyi');
+    r.assertOk(dom.window.__elements.stokProdukHariIni.classList.contains('hidden'), 'stok tersembunyi pada mode grid');
   });
 
   r.test('renderCatalogGrid: kartu produk terisi nama, harga, dan tombol quickAddToCart', () => {

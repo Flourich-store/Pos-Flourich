@@ -11,7 +11,7 @@
   <!-- Penanda versi halaman: dipakai self-check di blok script bawah untuk
        auto-reload bila browser mobile masih menyimpan HTML lama (GitHub Pages
        meng-cache 10 menit). Naikkan BERSAMAAN dengan VERSI_HTML tiap rilis. -->
-  <meta name="app-version" content="98">
+  <meta name="app-version" content="99">
 
   <link rel="icon" type="image/png" sizes="192x192"
     href="https://lh3.googleusercontent.com/d/1kbCU9E4sSQTdBylR24DFnRvsX1cAT">
@@ -2141,7 +2141,7 @@
           </button>
         </div>
 
-        <div style="margin-top: 28px;">
+        <div id="stokProdukHariIni" style="margin-top: 28px;">
           <h3><svg class="ic" aria-hidden="true"><use href="#icon-boxes-stacked"/></svg> Stok Produk Hari Ini</h3>
           <div class="table-responsive overflow-x-auto w-full"
             style="border-radius: var(--radius-md); overflow-x: auto;">
@@ -2335,7 +2335,7 @@
     // berkurang setelah checkout" di HP: perangkat menjalankan kode tua tanpa
     // sadar. Bila versi di server lebih baru dari versi yang berjalan, muat
     // ulang SEKALI otomatis. Penanda versi = <meta name="app-version">.
-    const VERSI_HTML = 98;
+    const VERSI_HTML = 99;
     function periksaVersiHalaman() {
       try {
         if (window.location.protocol === 'file:') return; // mode lokal: tidak relevan
@@ -3295,6 +3295,7 @@
     function switchProductViewMode(mode) {
       const gridEl = document.getElementById('productGridCatalog');
       const dropdownEl = document.getElementById('productDropdownView');
+      const stokEl = document.getElementById('stokProdukHariIni');
       const btnGrid = document.getElementById('btnModeGrid');
       const btnDropdown = document.getElementById('btnModeDropdown');
 
@@ -3302,11 +3303,13 @@
       if (isGrid) {
         if (gridEl) gridEl.classList.remove('hidden');
         if (dropdownEl) dropdownEl.classList.add('hidden');
+        if (stokEl) stokEl.classList.add('hidden');
         if (btnGrid) btnGrid.classList.add('active');
         if (btnDropdown) btnDropdown.classList.remove('active');
       } else {
         if (gridEl) gridEl.classList.add('hidden');
         if (dropdownEl) dropdownEl.classList.remove('hidden');
+        if (stokEl) stokEl.classList.remove('hidden');
         if (btnGrid) btnGrid.classList.remove('active');
         if (btnDropdown) btnDropdown.classList.add('active');
       }
