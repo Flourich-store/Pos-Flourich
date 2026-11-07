@@ -11,7 +11,7 @@
   <!-- Penanda versi halaman: dipakai self-check di blok script bawah untuk
        auto-reload bila browser mobile masih menyimpan HTML lama (GitHub Pages
        meng-cache 10 menit). Naikkan BERSAMAAN dengan VERSI_HTML tiap rilis. -->
-  <meta name="app-version" content="96">
+  <meta name="app-version" content="97">
 
   <link rel="icon" type="image/png" sizes="192x192"
     href="https://lh3.googleusercontent.com/d/1kbCU9E4sSQTdBylR24DFnRvsX1cAT">
@@ -657,6 +657,233 @@
 
     .full-width-card {
       grid-column: 1 / -1;
+    }
+
+    /* Header Flex dengan View Switcher */
+    .card-header-flex {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+    }
+
+    .card-header-flex h3 {
+      margin-bottom: 0;
+    }
+
+    .view-switcher {
+      display: inline-flex;
+      background: var(--surface-soft);
+      border: 1px solid var(--line);
+      border-radius: var(--radius-sm);
+      padding: 3px;
+      gap: 3px;
+    }
+
+    .btn-switch-mode {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--muted);
+      background: transparent;
+      border: none;
+      border-radius: 7px;
+      cursor: pointer;
+      transition: all 0.18s ease;
+    }
+
+    .btn-switch-mode:hover {
+      color: var(--ink);
+    }
+
+    .btn-switch-mode.active {
+      background: var(--surface);
+      color: var(--primary-deep);
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+    }
+
+    /* Search Bar di Catalog Grid */
+    .catalog-search-wrap {
+      position: relative;
+      margin-bottom: 14px;
+    }
+
+    .catalog-search-wrap .catalog-search-icon {
+      position: absolute;
+      left: 14px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--faint);
+      width: 14px;
+      height: 14px;
+      pointer-events: none;
+    }
+
+    .catalog-search-inp {
+      padding: 10px 14px 10px 38px;
+      font-size: 13.5px;
+      border-radius: var(--radius-sm);
+      border: 1.5px solid var(--line-strong);
+      background: var(--surface);
+    }
+
+    /* Grid Katalog Produk */
+    .product-catalog-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(135px, 1fr));
+      gap: 12px;
+      max-height: 440px;
+      overflow-y: auto;
+      padding: 2px 2px 8px;
+      border-radius: var(--radius-sm);
+    }
+
+    /* Kartu Produk */
+    .product-card {
+      position: relative;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: var(--radius-md);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      box-shadow: var(--shadow-sm);
+      transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .product-card:hover {
+      transform: translateY(-2px);
+      box-shadow: var(--shadow-md);
+      border-color: var(--primary);
+    }
+
+    .product-card:active {
+      transform: translateY(0);
+    }
+
+    .product-card.is-out-of-stock {
+      opacity: 0.6;
+      cursor: not-allowed;
+      border-style: dashed;
+    }
+
+    .product-card.is-out-of-stock:hover {
+      transform: none;
+      box-shadow: var(--shadow-sm);
+      border-color: var(--line);
+    }
+
+    .product-card-img-wrap {
+      position: relative;
+      width: 100%;
+      aspect-ratio: 1 / 1;
+      background: var(--surface-soft);
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .product-card-img {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      padding: 6px;
+      transition: transform 0.2s ease;
+    }
+
+    .product-card:hover .product-card-img {
+      transform: scale(1.05);
+    }
+
+    .product-card-badge {
+      position: absolute;
+      top: 6px;
+      right: 6px;
+      font-size: 10.5px;
+      font-weight: 800;
+      padding: 3px 7px;
+      border-radius: 999px;
+      line-height: 1;
+    }
+
+    .product-card-cart-count {
+      position: absolute;
+      top: 6px;
+      left: 6px;
+      font-size: 11px;
+      font-weight: 800;
+      padding: 3px 8px;
+      border-radius: 999px;
+      background: var(--primary);
+      color: #fff;
+      box-shadow: 0 2px 6px rgba(13, 138, 99, 0.4);
+      animation: popup 0.2s ease;
+    }
+
+    .product-card-body {
+      padding: 10px 10px 12px;
+      display: flex;
+      flex-direction: column;
+      flex: 1;
+      justify-content: space-between;
+    }
+
+    .product-card-title {
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--ink);
+      line-height: 1.35;
+      margin-bottom: 6px;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+      min-height: 34px;
+    }
+
+    .product-card-price {
+      font-size: 13.5px;
+      font-weight: 800;
+      color: var(--primary-deep);
+      margin-bottom: 8px;
+    }
+
+    .btn-quick-add {
+      width: 100%;
+      padding: 7px 10px;
+      font-size: 12px;
+      font-weight: 700;
+      border: 1px solid var(--primary);
+      background: var(--primary-tint);
+      color: var(--primary-deep);
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 5px;
+      transition: all 0.15s ease;
+    }
+
+    .btn-quick-add:hover {
+      background: var(--primary);
+      color: #fff;
+    }
+
+    .btn-quick-add:disabled,
+    .product-card.is-out-of-stock .btn-quick-add {
+      background: var(--surface-soft);
+      border-color: var(--line);
+      color: var(--muted);
+      cursor: not-allowed;
     }
 
     label {
@@ -1548,6 +1775,14 @@
     }
 
     @media screen and (max-width: 480px) {
+      .product-catalog-grid {
+        grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+      }
+
+      .btn-quick-add {
+        min-height: 44px;
+      }
+
       .login-card {
         padding: 30px 22px 24px;
       }
@@ -1838,16 +2073,41 @@
     <div class="container">
       <!-- Input Penjualan Card -->
       <div class="card">
-        <h3><svg class="ic" aria-hidden="true"><use href="#icon-cart-plus"/></svg> Input Penjualan</h3>
-        <label for="selProduk">Pilih Produk</label>
-        <select id="selProduk"></select>
+        <div class="card-header-flex">
+          <h3><svg class="ic" aria-hidden="true"><use href="#icon-cart-plus"/></svg> Input Penjualan</h3>
+          <div class="view-switcher" role="group" aria-label="Mode Tampilan Produk">
+            <button type="button" id="btnModeGrid" class="btn-switch-mode active" onclick="switchProductViewMode('grid')" title="Tampilan Grid Foto">
+              <svg class="ic" aria-hidden="true"><use href="#icon-boxes-stacked"/></svg> Grid
+            </button>
+            <button type="button" id="btnModeDropdown" class="btn-switch-mode" onclick="switchProductViewMode('dropdown')" title="Tampilan Dropdown">
+              <svg class="ic" aria-hidden="true"><use href="#icon-receipt"/></svg> Dropdown
+            </button>
+          </div>
+        </div>
 
-        <label for="inpQty">Jumlah (Qty)</label>
-        <input type="number" id="inpQty" value="1" min="1">
+        <!-- Mode 1: Katalog Grid Foto -->
+        <div id="productGridCatalog" class="catalog-view">
+          <div class="catalog-search-wrap">
+            <svg class="ic catalog-search-icon" aria-hidden="true"><use href="#icon-filter"/></svg>
+            <input type="text" id="catalogSearch" class="catalog-search-inp" placeholder="Cari produk cepat..." oninput="filterCatalogGrid(this.value)">
+          </div>
+          <div id="productGridContainer" class="product-catalog-grid">
+            <!-- Diisi dinamis oleh renderCatalogGrid() -->
+          </div>
+        </div>
 
-        <button type="button" class="btn-add" onclick="addToCart()">
-          <svg class="ic" aria-hidden="true"><use href="#icon-plus"/></svg> Tambah ke Keranjang
-        </button>
+        <!-- Mode 2: Dropdown Konvensional (Default disembunyikan jika mode grid aktif) -->
+        <div id="productDropdownView" class="dropdown-view hidden">
+          <label for="selProduk">Pilih Produk</label>
+          <select id="selProduk"></select>
+
+          <label for="inpQty">Jumlah (Qty)</label>
+          <input type="number" id="inpQty" value="1" min="1">
+
+          <button type="button" class="btn-add" onclick="addToCart()">
+            <svg class="ic" aria-hidden="true"><use href="#icon-plus"/></svg> Tambah ke Keranjang
+          </button>
+        </div>
 
         <div style="margin-top: 28px;">
           <h3><svg class="ic" aria-hidden="true"><use href="#icon-boxes-stacked"/></svg> Stok Produk Hari Ini</h3>
@@ -2037,7 +2297,7 @@
     // berkurang setelah checkout" di HP: perangkat menjalankan kode tua tanpa
     // sadar. Bila versi di server lebih baru dari versi yang berjalan, muat
     // ulang SEKALI otomatis. Penanda versi = <meta name="app-version">.
-    const VERSI_HTML = 96;
+    const VERSI_HTML = 97;
     function periksaVersiHalaman() {
       try {
         if (window.location.protocol === 'file:') return; // mode lokal: tidak relevan
@@ -2991,6 +3251,177 @@
       if (modal) modal.classList.remove('hidden');
     }
 
+    // ============================================================
+    // KATALOG PRODUK: MODE SWITCHER & GRID VIEW BERBASIS FOTO
+    // ============================================================
+    function switchProductViewMode(mode) {
+      const gridEl = document.getElementById('productGridCatalog');
+      const dropdownEl = document.getElementById('productDropdownView');
+      const btnGrid = document.getElementById('btnModeGrid');
+      const btnDropdown = document.getElementById('btnModeDropdown');
+
+      const isGrid = mode !== 'dropdown';
+      if (isGrid) {
+        if (gridEl) gridEl.classList.remove('hidden');
+        if (dropdownEl) dropdownEl.classList.add('hidden');
+        if (btnGrid) btnGrid.classList.add('active');
+        if (btnDropdown) btnDropdown.classList.remove('active');
+      } else {
+        if (gridEl) gridEl.classList.add('hidden');
+        if (dropdownEl) dropdownEl.classList.remove('hidden');
+        if (btnGrid) btnGrid.classList.remove('active');
+        if (btnDropdown) btnDropdown.classList.add('active');
+      }
+
+      try {
+        localStorage.setItem('pos_product_view_mode', isGrid ? 'grid' : 'dropdown');
+      } catch (e) { }
+
+      if (isGrid) {
+        renderCatalogGrid();
+      }
+    }
+
+    function initProductViewMode() {
+      let savedMode = 'grid';
+      try {
+        savedMode = localStorage.getItem('pos_product_view_mode') || 'grid';
+      } catch (e) { }
+      switchProductViewMode(savedMode);
+    }
+
+    function filterCatalogGrid(val) {
+      renderCatalogGrid();
+    }
+
+    function renderCatalogGrid() {
+      const container = document.getElementById('productGridContainer');
+      if (!container) return;
+
+      if (!Array.isArray(masterData) || masterData.length <= 1) {
+        container.innerHTML = '<div style="grid-column: 1 / -1; text-align: center; color: var(--muted); padding: 24px;">Memuat katalog produk...</div>';
+        return;
+      }
+
+      const searchInp = document.getElementById('catalogSearch');
+      const query = (searchInp && searchInp.value ? searchInp.value : '').toLowerCase().trim();
+      let html = '';
+      let matchCount = 0;
+
+      for (let i = 1; i < masterData.length; i++) {
+        const prod = masterData[i];
+        const id = String(prod[0] || '');
+        const nama = String(prod[1] || '');
+        const stok = Number(prod[2] || 0);
+        const harga = Number(prod[3] || 0);
+        const rawFoto = String(prod[4] || '').trim();
+
+        if (query && !nama.toLowerCase().includes(query)) {
+          continue;
+        }
+        matchCount++;
+
+        const fotoUrl = formatProductImageUrl(rawFoto);
+        const safeName = nama.replace(/'/g, "\\'");
+
+        let stokBadgeClass = 'stok-badge badge-high';
+        if (stok <= 0) stokBadgeClass = 'stok-badge badge-low';
+        else if (stok <= 5) stokBadgeClass = 'stok-badge badge-low';
+        else if (stok <= 20) stokBadgeClass = 'stok-badge badge-medium';
+
+        const stokText = stok <= 0 ? 'Habis' : stok;
+
+        const inCart = Array.isArray(cart) ? cart.find(x => String(x.id) === id) : null;
+        const inCartQty = inCart ? inCart.jumlah : 0;
+        const inCartBadge = inCartQty > 0
+          ? `<span class="product-card-cart-count" title="${inCartQty} item di keranjang">✓ ${inCartQty}</span>`
+          : '';
+
+        const isOutOfStock = stok <= 0;
+        const actionBtn = isOutOfStock
+          ? `<button type="button" class="btn-quick-add" disabled>Habis</button>`
+          : `<button type="button" class="btn-quick-add" onclick="event.stopPropagation(); quickAddToCart('${id}', 1)" title="Tambah 1 ke keranjang"><svg class="ic" aria-hidden="true"><use href="#icon-plus"/></svg> Tambah</button>`;
+
+        html += `
+          <div class="product-card ${isOutOfStock ? 'is-out-of-stock' : ''}" data-id="${id}" onclick="${isOutOfStock ? '' : `quickAddToCart('${id}', 1)`}" title="${safeName}">
+            <div class="product-card-img-wrap">
+              <img src="${fotoUrl}" class="product-card-img" loading="lazy" decoding="async" alt="${safeName}" onerror="handleImageError(this, '${rawFoto.replace(/'/g, "\\'")}')">
+              <span class="product-card-badge ${stokBadgeClass}">Sisa: ${stokText}</span>
+              ${inCartBadge}
+            </div>
+            <div class="product-card-body">
+              <div class="product-card-title">${nama}</div>
+              <div class="product-card-price">Rp ${harga.toLocaleString('id-ID')}</div>
+              ${actionBtn}
+            </div>
+          </div>
+        `;
+      }
+
+      if (matchCount === 0) {
+        html = '<div style="grid-column: 1 / -1; text-align: center; color: var(--muted); padding: 24px;">Tidak ada produk yang cocok dengan pencarian</div>';
+      }
+
+      container.innerHTML = html;
+    }
+
+    function updateCatalogGridBadges() {
+      const container = document.getElementById('productGridContainer');
+      if (!container || typeof container.querySelectorAll !== 'function') return;
+      const cards = container.querySelectorAll('.product-card');
+      if (!cards || !cards.length) return;
+      cards.forEach(function (card) {
+        const id = card.dataset ? card.dataset.id : (card.getAttribute ? card.getAttribute('data-id') : null);
+        if (!id) return;
+        const inCart = Array.isArray(cart) ? cart.find(x => String(x.id) === id) : null;
+        const inCartQty = inCart ? inCart.jumlah : 0;
+        let badge = typeof card.querySelector === 'function' ? card.querySelector('.product-card-cart-count') : null;
+        if (inCartQty > 0) {
+          if (!badge && typeof document.createElement === 'function') {
+            badge = document.createElement('span');
+            badge.className = 'product-card-cart-count';
+            const wrap = typeof card.querySelector === 'function' ? card.querySelector('.product-card-img-wrap') : null;
+            if (wrap && typeof wrap.appendChild === 'function') wrap.appendChild(badge);
+          }
+          if (badge) {
+            badge.textContent = '✓ ' + inCartQty;
+            badge.title = inCartQty + ' item di keranjang';
+          }
+        } else if (badge && typeof badge.remove === 'function') {
+          badge.remove();
+        }
+      });
+    }
+
+    function quickAddToCart(idProd, qty) {
+      const tambahQty = Number.isFinite(Number(qty)) && Number(qty) > 0 ? Number(qty) : 1;
+      if (!Array.isArray(masterData) || masterData.length <= 1) {
+        return alert('Data produk belum termuat. Muat ulang halaman lalu coba lagi.');
+      }
+
+      const id = String(idProd);
+      const prod = masterData.find(x => String(x[0]) === id);
+      if (!prod) return;
+
+      const stok = Number(prod[2] || 0);
+      if (stok <= 0) return alert('Gagal: Stok untuk ' + prod[1] + ' sudah habis!');
+
+      const exist = cart.find(x => String(x.id) === id);
+      const targetQty = (exist ? exist.jumlah : 0) + tambahQty;
+      if (targetQty > stok) {
+        return alert('Gagal: Total keranjang (' + targetQty + ') melebihi sisa stok (' + stok + ') untuk ' + prod[1] + '!');
+      }
+
+      if (exist) {
+        exist.jumlah = targetQty;
+        exist.total = targetQty * prod[3];
+      } else {
+        cart.push({ id: id, nama: prod[1], jumlah: tambahQty, total: tambahQty * prod[3], hpp: Number(prod[5] ?? 0) });
+      }
+
+      renderCart();
+    }
+
     function pilihProdukDariTabel(id) {
       const sel = document.getElementById('selProduk');
       if (sel) {
@@ -3000,6 +3431,11 @@
           inpQty.focus();
           inpQty.select();
         }
+      }
+      const gridEl = document.getElementById('productGridCatalog');
+      const isGrid = gridEl && !gridEl.classList.contains('hidden');
+      if (isGrid) {
+        quickAddToCart(id, 1);
       }
     }
 
@@ -3072,6 +3508,7 @@
           sel.innerHTML = selHTML;
         }
         tbody.innerHTML = tbodyHTML;
+        renderCatalogGrid();
       }
 
       // --- 2. Render Penjualan ---
@@ -3140,6 +3577,7 @@
     // Argumen ke-2 = limit riwayat: 60 transaksi terbaru cukup untuk layar POS;
     // payload kecil = data awal tampil jauh lebih cepat (dulu 490+ baris penuh).
     document.addEventListener('DOMContentLoaded', function () {
+      initProductViewMode();
       safeGoogleRun('getInitialData', [60], result => {
         simpanDanRenderData(result);
       }, err => {
@@ -3551,6 +3989,9 @@
 
       document.getElementById('txtGrandTotal').innerText = 'Rp ' + grandTotal.toLocaleString('id-ID');
       hitungKembalian();
+      if (typeof updateCatalogGridBadges === 'function') {
+        updateCatalogGridBadges();
+      }
     }
 
     function removeFromCart(index) {

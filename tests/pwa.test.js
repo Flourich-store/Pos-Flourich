@@ -13,6 +13,7 @@ const claspIgnore = fs.readFileSync(path.join(root, '.claspignore'), 'utf8');
 const rootUrl = new URL('https://flourich-store.github.io/Pos-Flourich/');
 const appVersionMeta = html.match(/<meta name="app-version" content="(\d+)">/);
 const appVersionCode = html.match(/const VERSI_HTML = (\d+);/);
+const appCacheName = (workerSource.match(/const CACHE_NAME = '([^']+)';/) || [])[1];
 let passed = 0;
 let failed = 0;
 
@@ -282,7 +283,7 @@ async function runServiceWorkerTests() {
     ));
     assert.strictEqual(response.body, 'fresh-html');
     assert.strictEqual(worker.fetchCalls[0].options.cache, 'no-store');
-    const cached = await worker.caches.get('flourich-pos-v96').get(
+    const cached = await worker.caches.get(appCacheName).get(
       'https://flourich-store.github.io/Pos-Flourich/'
     );
     assert.strictEqual(cached.body, 'fresh-html');
@@ -292,8 +293,8 @@ async function runServiceWorkerTests() {
     const worker = createWorkerHarness();
     const cache = await (async () => {
       const local = worker.caches;
-      if (!local.has('flourich-pos-v96')) local.set('flourich-pos-v96', new Map());
-      return local.get('flourich-pos-v96');
+      if (!local.has(appCacheName)) local.set(appCacheName, new Map());
+      return local.get(appCacheName);
     })();
     cache.set('https://flourich-store.github.io/Pos-Flourich/', createResponse('offline-html'));
     worker.setFetchImplementation(async () => {
@@ -309,10 +310,10 @@ async function runServiceWorkerTests() {
     const worker = createWorkerHarness();
     worker.caches.set('flourich-pos-v93', new Map());
     worker.caches.set('unrelated-cache', new Map());
-    worker.caches.set('flourich-pos-v96', new Map());
+    worker.caches.set(appCacheName, new Map());
     await worker.dispatchActivate();
     assert.deepStrictEqual([...worker.caches.keys()].sort(), [
-      'flourich-pos-v96',
+      appCacheName,
       'unrelated-cache'
     ]);
     assert.strictEqual(worker.claimCalls, 1);
@@ -321,8 +322,8 @@ async function runServiceWorkerTests() {
   await testAsync('QR uses network-first and replaces its cached copy when online', async () => {
     const worker = createWorkerHarness();
     const cache = await (async () => {
-      if (!worker.caches.has('flourich-pos-v96')) worker.caches.set('flourich-pos-v96', new Map());
-      return worker.caches.get('flourich-pos-v96');
+      if (!worker.caches.has(appCacheName)) worker.caches.set(appCacheName, new Map());
+      return worker.caches.get(appCacheName);
     })();
     const qrUrl = 'https://flourich-store.github.io/Pos-Flourich/qris-flourich.png';
     cache.set(qrUrl, createResponse('old-qr'));
@@ -347,9 +348,9 @@ async function runServiceWorkerTests() {
     });
     await worker.dispatchInstall();
     assert.strictEqual(worker.skipWaitingCalls, 1);
-    assert.ok(worker.caches.has('flourich-pos-v96'));
+    assert.ok(worker.caches.has(appCacheName));
     assert.strictEqual(
-      worker.caches.get('flourich-pos-v96').get('https://flourich-store.github.io/Pos-Flourich/').body,
+      worker.caches.get(appCacheName).get('https://flourich-store.github.io/Pos-Flourich/').body,
       'precached-html'
     );
   });
@@ -357,8 +358,8 @@ async function runServiceWorkerTests() {
   await testAsync('static icons and logo are cache-first', async () => {
     const worker = createWorkerHarness();
     const cache = await (async () => {
-      if (!worker.caches.has('flourich-pos-v96')) worker.caches.set('flourich-pos-v96', new Map());
-      return worker.caches.get('flourich-pos-v96');
+      if (!worker.caches.has(appCacheName)) worker.caches.set(appCacheName, new Map());
+      return worker.caches.get(appCacheName);
     })();
     const iconUrl = 'https://flourich-store.github.io/Pos-Flourich/icons/icon-192.png';
     cache.set(iconUrl, createResponse('cached-icon'));
@@ -369,8 +370,8 @@ async function runServiceWorkerTests() {
 
   await testAsync('HTTP error responses do not trigger stale navigation fallback', async () => {
     const worker = createWorkerHarness();
-    if (!worker.caches.has('flourich-pos-v96')) worker.caches.set('flourich-pos-v96', new Map());
-    worker.caches.get('flourich-pos-v96').set(
+    if (!worker.caches.has(appCacheName)) worker.caches.set(appCacheName, new Map());
+    worker.caches.get(appCacheName).set(
       'https://flourich-store.github.io/Pos-Flourich/',
       createResponse('stale-html')
     );

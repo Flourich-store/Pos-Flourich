@@ -472,4 +472,68 @@ r.suite('Frontend — mock mode lokal (file:)', () => {
   });
 });
 
+r.suite('Frontend — Mode Switcher & Katalog Grid Produk Foto', () => {
+  r.test('switchProductViewMode: toggle grid vs dropdown dan simpan di localStorage', () => {
+    const { dom, app } = siapkanAplikasi(RESPON_VALID);
+
+    app.call('switchProductViewMode', 'dropdown');
+    r.assertEq(dom.localStorage.getItem('pos_product_view_mode'), 'dropdown', 'mode tersimpan dropdown');
+    r.assertOk(dom.window.__elements.productGridCatalog.classList.contains('hidden'), 'grid tersembunyi');
+    r.assertFalse(dom.window.__elements.productDropdownView.classList.contains('hidden'), 'dropdown tampil');
+
+    app.call('switchProductViewMode', 'grid');
+    r.assertEq(dom.localStorage.getItem('pos_product_view_mode'), 'grid', 'mode tersimpan grid');
+    r.assertFalse(dom.window.__elements.productGridCatalog.classList.contains('hidden'), 'grid tampil');
+    r.assertOk(dom.window.__elements.productDropdownView.classList.contains('hidden'), 'dropdown tersembunyi');
+  });
+
+  r.test('renderCatalogGrid: kartu produk terisi nama, harga, dan tombol quickAddToCart', () => {
+    const { dom, app } = siapkanAplikasi(RESPON_VALID);
+
+    app.call('renderCatalogGrid');
+    const html = dom.window.__elements.productGridContainer.innerHTML;
+    r.assertIncludes(html, 'Semangci 250 ml', 'kartu produk 1 tampil');
+    r.assertIncludes(html, 'Wonapel 250 ml', 'kartu produk 2 tampil');
+    r.assertIncludes(html, 'Rp 15.000', 'harga terformat');
+    r.assertIncludes(html, 'quickAddToCart', 'memuat handler quickAddToCart');
+  });
+
+  r.test('filterCatalogGrid: menyaring produk berdasarkan kata kunci pencarian', () => {
+    const { dom, app } = siapkanAplikasi(RESPON_VALID);
+
+    dom.window.__elements.catalogSearch.value = 'Wonapel';
+    app.call('filterCatalogGrid', 'Wonapel');
+    const html = dom.window.__elements.productGridContainer.innerHTML;
+    r.assertIncludes(html, 'Wonapel 250 ml', 'produk yang dicari ada');
+    r.assertNotIncludes(html, 'Semangci 250 ml', 'produk lain tersaring');
+
+    dom.window.__elements.catalogSearch.value = 'tidak-ada-produk-xyz';
+    app.call('filterCatalogGrid', 'tidak-ada-produk-xyz');
+    r.assertIncludes(dom.window.__elements.productGridContainer.innerHTML, 'Tidak ada produk yang cocok', 'pesan ramah jika tidak ditemukan');
+  });
+
+  r.test('quickAddToCart: menambah item langsung ke keranjang dan memvalidasi stok', () => {
+    const { dom, app } = siapkanAplikasi(RESPON_VALID);
+
+    // Tambah 2 item Semangci (stok 50)
+    app.call('quickAddToCart', '1', 2);
+    let cart = app.get('cart');
+    r.assertEq(cart.length, 1, 'satu produk di keranjang');
+    r.assertEq(cart[0].jumlah, 2, 'jumlah 2');
+    r.assertEq(cart[0].total, 30000, 'total terhitung benar');
+
+    // Tambah 1 item lagi produk yang sama -> digabung
+    app.call('quickAddToCart', '1', 1);
+    cart = app.get('cart');
+    r.assertEq(cart[0].jumlah, 3, 'jumlah menjadi 3');
+    r.assertEq(cart[0].total, 45000, 'total bertambah');
+
+    // Coba tambah melebihi sisa stok (stok 50, keranjang saat ini 3)
+    app.call('quickAddToCart', '1', 50);
+    r.assertEq(dom.alerts.length, 1, 'ditolak saat melebihi stok');
+    r.assertIncludes(dom.alerts[0], 'melebihi sisa stok');
+    r.assertEq(app.get('cart')[0].jumlah, 3, 'keranjang tidak berubah saat ditolak');
+  });
+});
+
 r.run('Frontend index.html').then(ok => { process.exit(ok ? 0 : 1); });
