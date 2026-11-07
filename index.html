@@ -11,7 +11,7 @@
   <!-- Penanda versi halaman: dipakai self-check di blok script bawah untuk
        auto-reload bila browser mobile masih menyimpan HTML lama (GitHub Pages
        meng-cache 10 menit). Naikkan BERSAMAAN dengan VERSI_HTML tiap rilis. -->
-  <meta name="app-version" content="97">
+  <meta name="app-version" content="98">
 
   <link rel="icon" type="image/png" sizes="192x192"
     href="https://lh3.googleusercontent.com/d/1kbCU9E4sSQTdBylR24DFnRvsX1cAT">
@@ -1126,6 +1126,34 @@
       font-variant-numeric: tabular-nums;
     }
 
+    .quick-cash-buttons {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .quick-cash-btn {
+      min-width: 0;
+      min-height: 44px;
+      padding: 8px 4px;
+      border: 1px solid var(--line-strong);
+      border-radius: var(--radius-sm);
+      background: var(--surface);
+      color: var(--primary-deep);
+      font: inherit;
+      font-size: 12px;
+      font-weight: 800;
+      white-space: nowrap;
+      cursor: pointer;
+      transition: background 0.15s ease, border-color 0.15s ease;
+    }
+
+    .quick-cash-btn:hover {
+      background: var(--primary-tint);
+      border-color: var(--primary);
+    }
+
     .cart-item-right {
       display: flex;
       align-items: center;
@@ -1775,6 +1803,10 @@
     }
 
     @media screen and (max-width: 480px) {
+      .quick-cash-buttons {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
       .product-catalog-grid {
         grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
       }
@@ -2165,6 +2197,12 @@
         <div id="uangInputWrapper">
           <label>Uang Dibayar (Rp)</label>
           <input type="number" id="inpBayar" placeholder="Masukkan nominal pembayaran" oninput="hitungKembalian()">
+          <div class="quick-cash-buttons" role="group" aria-label="Pilihan cepat uang tunai">
+            <button type="button" class="quick-cash-btn" onclick="setQuickCash('exact')">Uang Pas</button>
+            <button type="button" class="quick-cash-btn" onclick="setQuickCash(20000)">20k</button>
+            <button type="button" class="quick-cash-btn" onclick="setQuickCash(50000)">50k</button>
+            <button type="button" class="quick-cash-btn" onclick="setQuickCash(100000)">100k</button>
+          </div>
           <div id="kembalianBox" class="kembalian-box">
             Uang Kembali : Rp 0
           </div>
@@ -2297,7 +2335,7 @@
     // berkurang setelah checkout" di HP: perangkat menjalankan kode tua tanpa
     // sadar. Bila versi di server lebih baru dari versi yang berjalan, muat
     // ulang SEKALI otomatis. Penanda versi = <meta name="app-version">.
-    const VERSI_HTML = 97;
+    const VERSI_HTML = 98;
     function periksaVersiHalaman() {
       try {
         if (window.location.protocol === 'file:') return; // mode lokal: tidak relevan
@@ -4007,6 +4045,19 @@
         document.getElementById('inpBayar').value = '';
         document.getElementById('kembalianBox').innerHTML = 'Uang Kembali : Rp 0';
       }
+    }
+
+    function setQuickCash(amount) {
+      let nilaiBayar = Number(amount);
+      if (amount === 'exact') {
+        nilaiBayar = (Array.isArray(cart) ? cart : []).reduce(function (total, item) {
+          return total + Number(item && item.total || 0);
+        }, 0);
+      }
+
+      if (!Number.isFinite(nilaiBayar) || nilaiBayar <= 0) return;
+      document.getElementById('inpBayar').value = String(nilaiBayar);
+      hitungKembalian();
     }
 
     function hitungKembalian() {

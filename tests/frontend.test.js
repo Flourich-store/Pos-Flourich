@@ -136,6 +136,48 @@ r.suite('Frontend — checkout() alur normal', () => {
   });
 });
 
+r.suite('Frontend — tombol cepat uang tunai', () => {
+  r.test('Uang Pas mengisi tepat total keranjang dan menghitung kembalian', () => {
+    const { dom, app } = siapkanAplikasi(RESPON_VALID);
+    isiKeranjang(app);
+
+    app.call('setQuickCash', 'exact');
+
+    r.assertEq(dom.window.__elements.inpBayar.value, '30000', 'nominal pas sama dengan total');
+    r.assertIncludes(dom.window.__elements.kembalianBox.innerHTML, 'Uang Kembali : Rp 0', 'kembalian nol');
+  });
+
+  r.test('tombol nominal tetap menghasilkan nominal dan kembalian yang benar', () => {
+    const { dom, app } = siapkanAplikasi(RESPON_VALID);
+    isiKeranjang(app);
+
+    app.call('setQuickCash', 20000);
+    r.assertEq(dom.window.__elements.inpBayar.value, '20000', 'tombol 20k mengisi 20000');
+    r.assertIncludes(dom.window.__elements.kembalianBox.innerHTML, 'Pembayaran Kurang: Rp 10.000', 'nominal kurang ditampilkan');
+
+    app.call('setQuickCash', 50000);
+    r.assertEq(dom.window.__elements.inpBayar.value, '50000', 'tombol 50k mengisi 50000');
+    r.assertIncludes(dom.window.__elements.kembalianBox.innerHTML, 'Uang Kembali : Rp 20.000', 'kembalian 50k benar');
+
+    app.call('setQuickCash', 100000);
+    r.assertEq(dom.window.__elements.inpBayar.value, '100000', 'tombol 100k mengisi 100000');
+    r.assertIncludes(dom.window.__elements.kembalianBox.innerHTML, 'Uang Kembali : Rp 70.000', 'kembalian 100k benar');
+  });
+
+  r.test('input nominal manual tetap tersedia dan tetap menghitung kembalian', () => {
+    const { dom, app } = siapkanAplikasi(RESPON_VALID);
+    isiKeranjang(app);
+
+    dom.window.__elements.inpBayar.value = '40000';
+    app.call('hitungKembalian');
+
+    r.assertEq(dom.window.__elements.inpBayar.value, '40000', 'input manual tidak dihilangkan atau diubah');
+    r.assertIncludes(dom.window.__elements.kembalianBox.innerHTML, 'Uang Kembali : Rp 10.000', 'kembalian manual benar');
+    r.assertIncludes(fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8'), 'id="inpBayar"',
+      'field input manual tetap ada di halaman');
+  });
+});
+
 r.suite('Frontend — checkout() skenario data produk gagal dimuat', () => {
 
   r.test('dataProduk gagal dimuat -> checkout diblokir dengan pesan ramah, TIDAK crash', () => {
