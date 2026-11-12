@@ -1090,6 +1090,16 @@ function siapkanSalinanMigrasiMultiCabang() {
 /**
  * Catat salinan yang dibuat MANUAL (File > Make a copy).
  * Menerima ID maupun URL spreadsheet salinan.
+ *
+ * VERIFIKASI — dulu ID apa pun diterima apa adanya, sehingga migrasi bisa
+ * lolos guard cadangan dengan ID salah, file terhapus, atau file lain:
+ *  1. salinan benar-benar ADA & bisa DIBUKA sebagai spreadsheet (openById)
+ *  2. bukan spreadsheet sumber itu sendiri
+ *  3. bentuknya memang salinan POS ini: sheet Penjualan/Produk/User ada dan
+ *     header Penjualan identik dengan sumber
+ *  4. jumlah baris penjualan TIDAK lebih sedikit dari sumber (salinan yang
+ *     lebih lama tidak bisa memulihkan data sekarang)
+ * Hanya bila keempatnya lolos, ID disimpan di Script Properties.
  */
 function catatSalinanMigrasiManual(idAtauUrl) {
   const out = { status: 'batal' };
@@ -1105,19 +1115,103 @@ function catatSalinanMigrasiManual(idAtauUrl) {
 
   try {
     const ss = getSpreadsheet();
-    if (id === ss.getId()) {
+
+    // (1) Nyata & bisa dibuka. openById butuh scope "spreadsheets" (sudah ada
+    // di appsscript.json) dan TIDAK butuh izin tulis Drive — jadi salinan
+    // manual tetap bisa diverifikasi meski makeCopy belum diizinkan.
+    let salinan = null;
+    try {
+      salinan = SpreadsheetApp.openById(id);
+    } catch (bukaErr) {
+      out.status = 'error';
+      out.pesan = 'ID "' + id + '" tidak bisa dibuka sebagai spreadsheet (' +
+        (bukaErr && bukaErr.message ? bukaErr.message : String(bukaErr)) + '). ' +
+        'Periksa: salinannya benar-benar ada, tidak ada di Trash, dan akun yang menjalankan script ini punya akses ke file itu.';
+      return _bfJson(out);
+    }
+    if (!salinan) {
+      out.status = 'error';
+      out.pesan = 'ID "' + id + '" terbuka tanpa objek spreadsheet. Salinan tidak dicatat.';
+      return _bfJson(out);
+    }
+
+    // (2) Bukan sumber.
+    if (salinan.getId() === ss.getId()) {
       out.pesan = 'ID yang dicatat adalah spreadsheet SUMBER, bukan salinan. Migrasi butuh cadangan terpisah.';
       return _bfJson(out);
     }
+
+    // (3) Bentuk & (4) kelengkapan baris.
+    const cek = _mcBandingkanBentuk(ss, salinan);
+    if (!cek.ok) {
+      out.status = 'error';
+      out.pesan = 'Salinan tidak dicatat: ' + cek.alasan;
+      out.calonSalinan = cek.info;
+      return _bfJson(out);
+    }
+
     PropertiesService.getScriptProperties().setProperty(MC_PROPS_SALINAN, id);
     out.status = 'ok';
     out.salinan = id;
-    out.pesan = 'Salinan manual dicatat. Migrasi boleh dijalankan. Pastikan salinan itu benar-benar ada dan milik spreadsheet ini.';
+    out.nama = cek.info.nama;
+    out.jumlahBarisPenjualan = cek.info.jumlahBarisPenjualan;
+    out.jumlahBarisProduk = cek.info.jumlahBarisProduk;
+    out.terakhirDiubah = cek.info.terakhirDiubah;
+    out.pesan = 'Salinan terverifikasi bisa dibuka, berbeda dari sumber, dan bentuknya cocok. ID dicatat; migrasi boleh dijalankan.';
   } catch (e) {
     out.status = 'error';
     out.pesan = 'Gagal mencatat salinan: ' + (e && e.message ? e.message : String(e));
   }
   return _bfJson(out);
+}
+
+/**
+ * Bandingkan bentuk spreadsheet sumber vs calon salinan.
+ * Tujuan: ID acak / file lain / salinan basi tidak lolos sebagai cadangan.
+ */
+function _mcBandingkanBentuk(sumber, salinan) {
+  const info = { nama: '', jumlahBarisPenjualan: 0, jumlahBarisProduk: 0, terakhirDiubah: '' };
+  try { info.nama = String(salinan.getName()); } catch (e) { info.nama = ''; }
+
+  const perlu = ['Penjualan', 'Produk', 'User'];
+  const hilang = [];
+  for (const nama of perlu) {
+    if (!salinan.getSheetByName(nama)) hilang.push(nama);
+  }
+  if (hilang.length) {
+    return {
+      ok: false,
+      alasan: 'calon salinan tidak punya sheet ' + hilang.join(', ') + ' — bukan salinan spreadsheet POS ini.',
+      info: info
+    };
+  }
+
+  const normal = (h) => h.map(x => String(_bfSel(x)).toLowerCase().trim()).filter(x => x !== '');
+  const hSumber = normal(_mcHeader(sumber.getSheetByName('Penjualan')).header);
+  const hSalinan = normal(_mcHeader(salinan.getSheetByName('Penjualan')).header);
+  if (JSON.stringify(hSumber) !== JSON.stringify(hSalinan)) {
+    return {
+      ok: false,
+      alasan: 'header sheet Penjualan calon salinan berbeda dari sumber (sumber: ' + hSumber.join(' | ') + ').',
+      info: info
+    };
+  }
+
+  info.jumlahBarisPenjualan = _bfHitungBarisData(salinan.getSheetByName('Penjualan'));
+  info.jumlahBarisProduk = _bfHitungBarisData(salinan.getSheetByName('Produk'));
+  try { info.terakhirDiubah = String(salinan.getLastUpdated()); } catch (e) { info.terakhirDiubah = ''; }
+
+  const barisSumber = _bfHitungBarisData(sumber.getSheetByName('Penjualan'));
+  if (info.jumlahBarisPenjualan < barisSumber) {
+    return {
+      ok: false,
+      alasan: 'calon salinan hanya punya ' + info.jumlahBarisPenjualan + ' baris penjualan sedangkan sumber sudah ' +
+        barisSumber + ' baris. Salinan itu lebih lama daripada data sekarang — buat salinan baru (File > Make a copy).',
+      info: info
+    };
+  }
+
+  return { ok: true, alasan: '', info: info };
 }
 
 /**

@@ -788,4 +788,80 @@ r.suite('Backfill - cekBlokTersedia() melaporkan status tulis SETIAP blok', () =
   });
 });
 
+// ════════════════════════════════════════════════════════════════
+// Migrasi multi-cabang — verifikasi salinan manual
+//
+// catatSalinanMigrasiManual() adalah SATU-SATUNYA jalan mencatat cadangan
+// ketika scope tulis Drive tidak tersedia (appsscript.json proyek ini hanya
+// punya drive.readonly). Kalau fungsi itu menerima ID apa saja, migrasi bisa
+// lolos guard cadangan tanpa cadangan yang benar-benar ada — dan itu
+// kegagalan yang baru ketahuan saat data sudah perlu dipulihkan.
+// ════════════════════════════════════════════════════════════════
+
+/**
+ * Sumber + (opsional) calon salinan, keduanya terdaftar di registry
+ * openById sehingga ID benar-benar dibedakan seperti Sheets sungguhan.
+ */
+function setupSalinan(opts) {
+  const o = opts || {};
+  const gas = createGasMock();
+  gas.scriptRuntime.props.ENV = 'production';
+  gas.scriptRuntime.props.SS_ID_PROD = 'SUMBER-1';
+
+  const sumber = gas.createSpreadsheetMock(PRODUK, {
+    ssId: 'SUMBER-1',
+    ssName: 'POS Flourich',
+    penjualanRows: penjualanRows()
+  });
+  gas.scriptRuntime.activeSpreadsheet = sumber;
+  gas.scriptRuntime.spreadsheets = { 'SUMBER-1': sumber };
+
+  let salinan = null;
+  if (o.denganSalinan) {
+    salinan = gas.createSpreadsheetMock(o.produk || PRODUK, {
+      ssId: 'SALINAN-1',
+      ssName: 'Salinan POS Flourich',
+      penjualanRows: o.penjualanRowsSalinan || penjualanRows()
+    });
+    gas.scriptRuntime.spreadsheets['SALINAN-1'] = salinan;
+  }
+
+  return { gas, sumber, salinan, backend: loadBackendBackfill(gas) };
+}
+
+r.suite('Migrasi multi-cabang - verifikasi salinan manual', () => {
+  r.test('ID palsu (tidak ada) -> DITOLAK & tidak dicatat', () => {
+    const s = setupSalinan();
+    const out = call(() => s.backend.sandbox.catatSalinanMigrasiManual('ID-TIDAK-ADA-999'));
+
+    r.assertEq(out.status, 'error', 'status error, bukan ok');
+    r.assertIncludes(out.pesan, 'tidak bisa dibuka', 'pesan menyebut tidak bisa dibuka');
+    r.assertEq(s.gas.scriptRuntime.props.MC_SALINAN_SPREADSHEET, undefined,
+      'property salinan TIDAK boleh tersimpan');
+  });
+
+  r.test('ID spreadsheet SUMBER -> ditolak (butuh cadangan terpisah)', () => {
+    const s = setupSalinan();
+    const out = call(() => s.backend.sandbox.catatSalinanMigrasiManual('SUMBER-1'));
+
+    r.assertEq(out.status, 'batal', 'status batal');
+    r.assertIncludes(out.pesan, 'SUMBER', 'pesan menunjuk ke spreadsheet sumber');
+    r.assertEq(s.gas.scriptRuntime.props.MC_SALINAN_SPREADSHEET, undefined,
+      'property salinan TIDAK boleh tersimpan');
+  });
+
+  r.test('salinan valid (URL) -> diverifikasi lalu dicatat', () => {
+    const s = setupSalinan({ denganSalinan: true });
+    const out = call(() => s.backend.sandbox.catatSalinanMigrasiManual(
+      'https://docs.google.com/spreadsheets/d/SALINAN-1/edit#gid=0'));
+
+    r.assertEq(out.status, 'ok', 'status ok');
+    r.assertEq(out.salinan, 'SALINAN-1', 'ID diambil dari URL');
+    r.assertEq(s.gas.scriptRuntime.props.MC_SALINAN_SPREADSHEET, 'SALINAN-1',
+      'property salinan tersimpan');
+    r.assertOk(out.jumlahBarisPenjualan > 0, 'jumlah baris salinan dilaporkan');
+    r.assertIncludes(out.pesan, 'terverifikasi', 'pesan menyebut verifikasi');
+  });
+});
+
 r.run('Backfill Kolom N..R').then(ok => { process.exit(ok ? 0 : 1); });

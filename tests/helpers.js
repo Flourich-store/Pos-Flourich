@@ -194,7 +194,23 @@ function createGasMock() {
   };
 
   const SpreadsheetApp = {
-    openById: () => scriptRuntime.activeSpreadsheet || null,
+    /**
+     * openById menghormati ID.
+     *
+     * Registry `scriptRuntime.spreadsheets` dipakai test yang butuh LEBIH
+     * dari satu spreadsheet (mis. memverifikasi salinan migrasi manual:
+     * ID palsu harus gagal, ID sumber harus ditolak, salinan asli diterima).
+     * Tanpa registry, perilaku lama dipertahankan apa adanya: ID apa pun
+     * mengembalikan spreadsheet aktif — supaya test lama tidak berubah.
+     */
+    openById: (id) => {
+      const daftar = scriptRuntime.spreadsheets || {};
+      const kunci = String(id == null ? '' : id);
+      if (kunci && daftar[kunci]) return daftar[kunci];
+      if (Object.keys(daftar).length === 0) return scriptRuntime.activeSpreadsheet || null;
+      // Sheets sungguhan melempar untuk ID yang tidak ada / tidak bisa diakses.
+      throw new Error('Tidak ditemukan spreadsheet dengan ID ' + kunci);
+    },
     getActiveSpreadsheet: () => scriptRuntime.activeSpreadsheet
   };
 
