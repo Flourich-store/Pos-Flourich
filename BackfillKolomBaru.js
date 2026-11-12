@@ -889,6 +889,12 @@ const MC_HEADER_CABANG = 'Cabang';
 const MC_NAMA_SHEET_STOK = 'Stok_Cabang';
 const MC_PROPS_SALINAN = 'MC_SALINAN_SPREADSHEET';
 const MC_PROPS_SELESAI = 'MC_MIGRASI_SELESAI';
+// Property KHUSUS UJI: hanya berisi ID salinan, tidak dipakai jalur produksi.
+// Dipisah dari MC_PROPS_SALINAN/MC_PROPS_SELESAI supaya menjalankan uji tidak
+// pernah bisa membuat migrasi sungguhan mengira cadangan sudah tercatat atau
+// migrasi sudah pernah jalan.
+const MC_PROPS_UJI_TARGET = 'MC_UJI_TARGET_ID';
+const MC_PROPS_UJI_CADANGAN = 'MC_UJI_CADANGAN_ID';
 const MC_KUNCI_MS = 60000;
 
 /** Indeks kolom (0-based) dari nama header; -1 bila tidak ada. */
@@ -1629,4 +1635,46 @@ function ujiMigrasiMultiCabangDiSalinan(idTarget, idCadangan) {
     : null;
 
   return _bfJson(laporan);
+}
+
+/**
+ * Entry point TANPA PARAMETER untuk dijalankan dari dropdown editor Apps Script.
+ *
+ * ID salinan dibaca dari Script Properties (Project Settings > Script
+ * Properties), jadi tidak ada ID yang perlu ditempel ke kode dan tidak ada
+ * fungsi sementara yang harus dihapus lagi setelah uji:
+ *
+ *   MC_UJI_TARGET_ID    ID salinan tempat migrasi dicoba
+ *   MC_UJI_CADANGAN_ID  ID salinan cadangan (file terpisah)
+ *
+ * Kedua property ini HANYA berisi ID dan tidak dibaca oleh jalur produksi;
+ * guard produksi (MC_SALINAN_SPREADSHEET / MC_MIGRASI_SELESAI) tetap tidak
+ * tersentuh. Semua pengaman ujiMigrasiMultiCabangDiSalinan() tetap berlaku,
+ * termasuk penolakan bila ID target ternyata spreadsheet produksi.
+ */
+function ujiMigrasiMultiCabangDariProps() {
+  const out = { status: 'batal', uji: true };
+
+  let props = null;
+  try {
+    props = PropertiesService.getScriptProperties();
+  } catch (e) {
+    props = _mcPropsMemori();
+  }
+
+  const target = String(props.getProperty(MC_PROPS_UJI_TARGET) || '').trim();
+  const cadangan = String(props.getProperty(MC_PROPS_UJI_CADANGAN) || '').trim();
+
+  if (!target || !cadangan) {
+    const kurang = [];
+    if (!target) kurang.push(MC_PROPS_UJI_TARGET);
+    if (!cadangan) kurang.push(MC_PROPS_UJI_CADANGAN);
+    out.pesan = 'Script Property belum diisi: ' + kurang.join(', ') + '. ' +
+      'Buka Project Settings > Script Properties, isi ' + MC_PROPS_UJI_TARGET + ' dan ' +
+      MC_PROPS_UJI_CADANGAN + ' dengan ID dua salinan spreadsheet (bukan ID produksi), ' +
+      'lalu jalankan fungsi ini lagi.';
+    return _bfJson(out);
+  }
+
+  return ujiMigrasiMultiCabangDiSalinan(target, cadangan);
 }

@@ -991,6 +991,68 @@ r.suite('Migrasi multi-cabang - uji end-to-end di salinan', () => {
     r.assertEq(s.target.getSheetByName('Stok_Cabang'), null, 'salinan belum dapat Stok_Cabang');
     r.assertEq(snap(s.sumber.__penjualan), snapProduksi, 'sheet Penjualan produksi identik');
   });
+
+  // ── Entry point tanpa parameter (dipilih dari dropdown editor) ──
+
+  r.test('property uji belum diisi -> batal & menyebut nama property yang kurang', () => {
+    const s = setupUjiSalinan();
+    const out = call(() => s.backend.sandbox.ujiMigrasiMultiCabangDariProps());
+
+    r.assertEq(out.status, 'batal', 'status batal');
+    r.assertIncludes(out.pesan, 'MC_UJI_TARGET_ID', 'menyebut property target');
+    r.assertIncludes(out.pesan, 'MC_UJI_CADANGAN_ID', 'menyebut property cadangan');
+    r.assertEq(out.uji, true, 'ditandai sebagai uji');
+    r.assertEq(s.target.__penjualan.getLastColumn(), 13, 'tidak ada yang ditulis');
+  });
+
+  r.test('hanya target diisi -> tetap batal, hanya cadangan yang dilaporkan kurang', () => {
+    const s = setupUjiSalinan();
+    s.gas.scriptRuntime.props.MC_UJI_TARGET_ID = 'SALINAN-1';
+    const out = call(() => s.backend.sandbox.ujiMigrasiMultiCabangDariProps());
+
+    r.assertEq(out.status, 'batal', 'status batal');
+    // Hanya bagian "belum diisi: ..." yang diperiksa — kalimat petunjuk di
+    // belakangnya memang menyebut kedua nama property.
+    const kurang = out.pesan.split('.')[0];
+    r.assertIncludes(kurang, 'MC_UJI_CADANGAN_ID', 'cadangan dilaporkan kurang');
+    r.assertNotIncludes(kurang, 'MC_UJI_TARGET_ID', 'target TIDAK dilaporkan kurang');
+  });
+
+  r.test('dua property terisi -> rantai penuh jalan, produksi tetap utuh', () => {
+    const s = setupUjiSalinan();
+    s.gas.scriptRuntime.props.MC_UJI_TARGET_ID = 'SALINAN-1';
+    s.gas.scriptRuntime.props.MC_UJI_CADANGAN_ID = 'CADANGAN-1';
+    const snapProduksi = snap(s.sumber.__penjualan);
+
+    const out = call(() => s.backend.sandbox.ujiMigrasiMultiCabangDariProps());
+
+    r.assertEq(out.status, 'ok', 'status ok: ' + out.pesan);
+    r.assertEq(out.target, 'SALINAN-1', 'target dari property');
+    r.assertEq(out.cadangan, 'CADANGAN-1', 'cadangan dari property');
+    r.assertEq(out.migrasi.status, 'selesai', 'migrasi selesai');
+    r.assertEq(out.migrasiKedua.status, 'sudah-pernah', 'idempoten');
+    r.assertEq(out.propertyProduksiTersentuh, false, 'Script Properties guard produksi tidak berubah');
+
+    // Property UJI sendiri tidak boleh dibaca jalur produksi: hanya MC_SALINAN
+    // dan MC_MIGRASI_SELESAI yang penting, dan keduanya tetap kosong.
+    r.assertEq(s.gas.scriptRuntime.props.MC_SALINAN_SPREADSHEET, undefined, 'MC_SALINAN tetap kosong');
+    r.assertEq(s.gas.scriptRuntime.props.MC_MIGRASI_SELESAI, undefined, 'MC_MIGRASI_SELESAI tetap kosong');
+    r.assertEq(snap(s.sumber.__penjualan), snapProduksi, 'sheet Penjualan produksi identik');
+  });
+
+  r.test('property uji berisi ID PRODUKSI -> ditolak, tidak menulis', () => {
+    const s = setupUjiSalinan();
+    s.gas.scriptRuntime.props.MC_UJI_TARGET_ID = 'SUMBER-1';
+    s.gas.scriptRuntime.props.MC_UJI_CADANGAN_ID = 'CADANGAN-1';
+    const snapProduksi = snap(s.sumber.__penjualan);
+
+    const out = call(() => s.backend.sandbox.ujiMigrasiMultiCabangDariProps());
+
+    r.assertEq(out.status, 'error', 'status error');
+    r.assertIncludes(out.pesan, 'PRODUKSI', 'pesan menyebut produksi');
+    r.assertEq(s.sumber.__penjualan.getLastColumn(), 13, 'Penjualan produksi tetap 13 kolom');
+    r.assertEq(snap(s.sumber.__penjualan), snapProduksi, 'sheet Penjualan produksi identik');
+  });
 });
 
 r.run('Backfill Kolom N..R').then(ok => { process.exit(ok ? 0 : 1); });
