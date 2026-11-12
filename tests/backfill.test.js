@@ -862,6 +862,37 @@ r.suite('Migrasi multi-cabang - verifikasi salinan manual', () => {
     r.assertOk(out.jumlahBarisPenjualan > 0, 'jumlah baris salinan dilaporkan');
     r.assertIncludes(out.pesan, 'terverifikasi', 'pesan menyebut verifikasi');
   });
+
+  r.test('salinan lebih BASI dari sumber -> ditolak', () => {
+    // Salinan yang dibuat kemarin tidak bisa memulihkan penjualan hari ini.
+    // Guard ini menjaga jam rollback tetap berarti: cadangan harus memuat
+    // MINIMAL sebanyak data yang sedang dipertaruhkan.
+    const s = setupSalinan({
+      denganSalinan: true,
+      penjualanRowsSalinan: [H13.slice(), penjualanRows()[1]]
+    });
+    const out = call(() => s.backend.sandbox.catatSalinanMigrasiManual('SALINAN-1'));
+
+    r.assertEq(out.status, 'error', 'status error');
+    r.assertIncludes(out.pesan, 'lebih lama', 'pesan menyebut salinan lebih lama dari sumber');
+    r.assertEq(out.calonSalinan.jumlahBarisPenjualan, 1, '1 baris data penjualan di salinan');
+    r.assertEq(s.gas.scriptRuntime.props.MC_SALINAN_SPREADSHEET, undefined,
+      'property salinan TIDAK boleh tersimpan');
+  });
+
+  r.test('header Penjualan berbeda (bukan file POS) -> ditolak', () => {
+    // File lain yang bisa dibuka tetap bukan cadangan yang sah.
+    const s = setupSalinan({
+      denganSalinan: true,
+      penjualanRowsSalinan: [['Tanggal', 'Total'], ['01/09/2026', 10000], ['02/09/2026', 20000]]
+    });
+    const out = call(() => s.backend.sandbox.catatSalinanMigrasiManual('SALINAN-1'));
+
+    r.assertEq(out.status, 'error', 'status error');
+    r.assertIncludes(out.pesan, 'header sheet Penjualan', 'pesan menunjuk header Penjualan');
+    r.assertEq(s.gas.scriptRuntime.props.MC_SALINAN_SPREADSHEET, undefined,
+      'property salinan TIDAK boleh tersimpan');
+  });
 });
 
 r.run('Backfill Kolom N..R').then(ok => { process.exit(ok ? 0 : 1); });
