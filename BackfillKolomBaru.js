@@ -1102,6 +1102,17 @@ function siapkanSalinanMigrasiMultiCabang() {
  * Hanya bila keempatnya lolos, ID disimpan di Script Properties.
  */
 function catatSalinanMigrasiManual(idAtauUrl) {
+  let props = null;
+  try { props = PropertiesService.getScriptProperties(); } catch (e) { props = _mcPropsMemori(); }
+  return _mcCatatSalinanInti(idAtauUrl, getSpreadsheet(), props);
+}
+
+/**
+ * Inti pencatatan salinan, dipisah dari wrapper supaya jalur uji
+ * (ujiMigrasiMultiCabangDiSalinan) bisa memberi sumber & property SENDIRI
+ * tanpa menyentuh Script Properties produksi.
+ */
+function _mcCatatSalinanInti(idAtauUrl, ssSumber, props) {
   const out = { status: 'batal' };
   const teks = String(idAtauUrl == null ? '' : idAtauUrl).trim();
   if (!teks) {
@@ -1114,8 +1125,6 @@ function catatSalinanMigrasiManual(idAtauUrl) {
   if (cocok) id = cocok[1];
 
   try {
-    const ss = getSpreadsheet();
-
     // (1) Nyata & bisa dibuka. openById butuh scope "spreadsheets" (sudah ada
     // di appsscript.json) dan TIDAK butuh izin tulis Drive — jadi salinan
     // manual tetap bisa diverifikasi meski makeCopy belum diizinkan.
@@ -1136,13 +1145,13 @@ function catatSalinanMigrasiManual(idAtauUrl) {
     }
 
     // (2) Bukan sumber.
-    if (salinan.getId() === ss.getId()) {
+    if (salinan.getId() === ssSumber.getId()) {
       out.pesan = 'ID yang dicatat adalah spreadsheet SUMBER, bukan salinan. Migrasi butuh cadangan terpisah.';
       return _bfJson(out);
     }
 
     // (3) Bentuk & (4) kelengkapan baris.
-    const cek = _mcBandingkanBentuk(ss, salinan);
+    const cek = _mcBandingkanBentuk(ssSumber, salinan);
     if (!cek.ok) {
       out.status = 'error';
       out.pesan = 'Salinan tidak dicatat: ' + cek.alasan;
@@ -1150,7 +1159,7 @@ function catatSalinanMigrasiManual(idAtauUrl) {
       return _bfJson(out);
     }
 
-    PropertiesService.getScriptProperties().setProperty(MC_PROPS_SALINAN, id);
+    props.setProperty(MC_PROPS_SALINAN, id);
     out.status = 'ok';
     out.salinan = id;
     out.nama = cek.info.nama;
@@ -1347,6 +1356,18 @@ function _mcVerifikasi(ss, kolomJual, kolomUser, hasilStok) {
  * memulihkan dari salinan yang sudah dibuat di langkah 1.
  */
 function migrasiMultiCabang() {
+  let props = null;
+  try { props = PropertiesService.getScriptProperties(); } catch (e) { props = _mcPropsMemori(); }
+  return _mcMigrasiInti(getSpreadsheet(), props, {});
+}
+
+/**
+ * Inti migrasi. `props` sengaja parameter, bukan Script Properties langsung:
+ * jalur uji memakai property di memori sehingga guard produksi
+ * (MC_SALINAN / MC_MIGRASI_SELESAI) tidak ikut terisi oleh rehearsal.
+ */
+function _mcMigrasiInti(ss, props, opsi) {
+  const uji = !!(opsi && opsi.uji);
   const laporan = { status: 'batal', langkah: [], peringatan: [], verifikasi: {} };
 
   let kunci = null;
@@ -1364,9 +1385,6 @@ function migrasiMultiCabang() {
   }
 
   try {
-    const ss = getSpreadsheet();
-    const props = PropertiesService.getScriptProperties();
-
     if (!props.getProperty(MC_PROPS_SALINAN)) {
       laporan.pesan = 'Belum ada salinan spreadsheet yang tercatat. Jalankan ' +
         'siapkanSalinanMigrasiMultiCabang() (atau catatSalinanMigrasiManual("<ID>")) lebih dulu. ' +
@@ -1412,7 +1430,7 @@ function migrasiMultiCabang() {
 
     if (laporan.verifikasi.ok) {
       props.setProperty(MC_PROPS_SELESAI, new Date().toISOString());
-      try { buangCacheAwal(); } catch (e) { /* cache tidak tersedia di uji */ }
+      if (!uji) { try { buangCacheAwal(); } catch (e) { /* cache tidak tersedia di uji */ } }
       laporan.status = 'selesai';
       laporan.pesan = 'Migrasi selesai & terverifikasi. Data lama tidak berubah; hanya kolom Cabang dan sheet Stok_Cabang yang bertambah.';
     } else {
@@ -1427,6 +1445,188 @@ function migrasiMultiCabang() {
   } finally {
     try { if (pegang) kunci.releaseLock(); } catch (e) { /* abaikan */ }
   }
+
+  return _bfJson(laporan);
+}
+
+// ════════════════════════════════════════════════════════════════
+// UJI END-TO-END DI SALINAN — SPREADSHEET PRODUKSI TIDAK DISENTUH
+//
+// Masalahnya: migrasiMultiCabang() memakai getSpreadsheet(), yang targetnya
+// ditentukan property ENV/SS_ID_PROD. Mengubah property itu untuk mencoba
+// migrasi akan mengalihkan POS LIVE ke spreadsheet lain — jadi cara itu
+// dilarang di sini.
+//
+// ujiMigrasiMultiCabangDiSalinan(target, cadangan) menerima ID EKSPLISIT
+// (pola yang sama dengan ujiStagingPenjualan di Code.js) lalu menjalankan
+// rantai penuh — pratinjau, pencatatan salinan, migrasi, verifikasi, dan
+// migrasi kedua untuk membuktikan idempotensi — di bawah property di
+// MEMORI. Script Properties produksi hanya DIBACA untuk cek pengaman, lalu
+// dibandingkan di akhir sebagai bukti tidak berubah.
+// ════════════════════════════════════════════════════════════════
+
+/** Property store di memori: pengganti Script Properties selama uji. */
+function _mcPropsMemori() {
+  const isi = {};
+  return {
+    getProperty: (k) => (Object.prototype.hasOwnProperty.call(isi, String(k)) ? isi[String(k)] : null),
+    setProperty: (k, v) => { isi[String(k)] = String(v); return null; },
+    deleteProperty: (k) => { delete isi[String(k)]; return null; }
+  };
+}
+
+/** ID spreadsheet produksi yang tidak boleh dijadikan target uji. */
+function _mcIdProduksi() {
+  const konstanta = (typeof SS_ID_PROD_KONSTAN !== 'undefined')
+    ? SS_ID_PROD_KONSTAN
+    : '17nWhZx32MhOWI6OnADqisHwjsmAYrBug4-rRT_CjUJQ';
+  try {
+    const dariProps = String(PropertiesService.getScriptProperties().getProperty('SS_ID_PROD') || '').trim();
+    return dariProps && dariProps !== konstanta ? dariProps : konstanta;
+  } catch (e) {
+    return konstanta;
+  }
+}
+
+/** Bentuk ringkas sebuah spreadsheet — untuk bukti sebelum/sesudah. */
+function _mcRingkas(ss) {
+  const r = { id: String(ss.getId()), nama: String(ss.getName()) };
+
+  const jual = ss.getSheetByName('Penjualan');
+  if (jual) {
+    const h = _mcHeader(jual);
+    r.penjualan = {
+      kolom: h.lebar,
+      punyaCabang: _mcIdxHeader(h.header, MC_HEADER_CABANG) >= 0,
+      barisData: _bfHitungBarisData(jual)
+    };
+  }
+
+  const user = ss.getSheetByName('User');
+  if (user) {
+    const h = _mcHeader(user);
+    r.user = { kolom: h.lebar, punyaCabang: _mcIdxHeader(h.header, MC_HEADER_CABANG) >= 0 };
+  }
+
+  const stok = ss.getSheetByName(MC_NAMA_SHEET_STOK);
+  r.stokCabang = stok
+    ? { ada: true, baris: Math.max(0, stok.getLastRow() - 1) }
+    : { ada: false, baris: 0 };
+
+  return r;
+}
+
+/** Cuplikan property guard produksi, untuk dibandingkan sebelum/sesudah. */
+function _mcCuplikanProps(props) {
+  try {
+    return [MC_PROPS_SALINAN, MC_PROPS_SELESAI]
+      .map(k => String(props.getProperty(k) || ''))
+      .join('|');
+  } catch (e) {
+    return 'tidak-tersedia';
+  }
+}
+
+/**
+ * Jalankan seluruh jalur migrasi pada SALINAN, bukan produksi.
+ *
+ * @param {string} idTarget   ID spreadsheet salinan tempat migrasi dicoba
+ * @param {string} idCadangan ID salinan DARI target, dipakai guard cadangan
+ */
+function ujiMigrasiMultiCabangDiSalinan(idTarget, idCadangan) {
+  const laporan = {
+    status: 'batal',
+    uji: true,
+    target: '',
+    cadangan: '',
+    langkah: [],
+    peringatan: [],
+    propertyProduksiTersentuh: null
+  };
+
+  const target = String(idTarget == null ? '' : idTarget).trim();
+  const cadangan = String(idCadangan == null ? '' : idCadangan).trim();
+
+  if (!target || !cadangan) {
+    laporan.pesan = 'Butuh DUA ID: ujiMigrasiMultiCabangDiSalinan("<ID salinan target>", "<ID salinan cadangan>"). ' +
+      'Buat dua kali File > Make a copy: satu untuk dijalankan, satu sebagai cadangan. Produksi tidak dipakai.';
+    return _bfJson(laporan);
+  }
+  if (target === cadangan) {
+    laporan.pesan = 'ID target dan ID cadangan sama (' + target + '). Cadangan harus file terpisah, ' +
+      'kalau tidak guard cadangan hanya akan membandingkan file dengan dirinya sendiri.';
+    return _bfJson(laporan);
+  }
+
+  const produksi = _mcIdProduksi();
+  laporan.target = target;
+  laporan.cadangan = cadangan;
+  if (target === produksi) {
+    laporan.status = 'error';
+    laporan.pesan = 'DITOLAK: target adalah spreadsheet PRODUKSI (' + produksi + '). ' +
+      'Uji ini hanya boleh dijalankan pada salinan.';
+    return _bfJson(laporan);
+  }
+
+  let propsLive = null;
+  let sebelumProps = 'tidak-tersedia';
+  try {
+    propsLive = PropertiesService.getScriptProperties();
+    sebelumProps = _mcCuplikanProps(propsLive);
+  } catch (e) {
+    propsLive = null;
+  }
+
+  try {
+    const ss = SpreadsheetApp.openById(target);
+    const ssCadangan = SpreadsheetApp.openById(cadangan);
+
+    if (String(ss.getId()) === produksi) {
+      throw new Error('ID target ternyata menunjuk spreadsheet produksi (' + produksi + '). Uji dibatalkan.');
+    }
+    if (String(ss.getId()) === String(ssCadangan.getId())) {
+      throw new Error('ID cadangan menunjuk file yang sama dengan target. Cadangan harus file terpisah.');
+    }
+
+    // Property di memori: guard produksi tidak ikut terisi oleh rehearsal.
+    const props = _mcPropsMemori();
+
+    laporan.sebelum = _mcRingkas(ss);
+    laporan.pratinjau = JSON.parse(_bfJson(_mcPratinjau(ss)));
+
+    laporan.catatSalinan = JSON.parse(_mcCatatSalinanInti(cadangan, ss, props));
+    if (laporan.catatSalinan.status !== 'ok') {
+      laporan.status = 'batal';
+      laporan.pesan = 'Berhenti di pencatatan salinan: ' + laporan.catatSalinan.pesan;
+      laporan.propertyProduksiTersentuh = propsLive
+        ? (_mcCuplikanProps(propsLive) !== sebelumProps)
+        : null;
+      return _bfJson(laporan);
+    }
+    laporan.salinanTercatatDiPropsUji = props.getProperty(MC_PROPS_SALINAN);
+
+    laporan.migrasi = JSON.parse(_mcMigrasiInti(ss, props, { uji: true }));
+    laporan.sesudah = _mcRingkas(ss);
+
+    // Jalan kedua: harus "sudah-pernah" tanpa menulis apa pun.
+    laporan.migrasiKedua = JSON.parse(_mcMigrasiInti(ss, props, { uji: true }));
+    laporan.penandaSelesaiDiPropsUji = props.getProperty(MC_PROPS_SELESAI) || '';
+
+    const lolos = laporan.migrasi.status === 'selesai' &&
+      laporan.migrasiKedua.status === 'sudah-pernah' &&
+      !!(laporan.migrasi.verifikasi && laporan.migrasi.verifikasi.ok);
+    laporan.status = lolos ? 'ok' : 'perlu-diulang';
+    laporan.pesan = lolos
+      ? 'Jalur migrasi berhasil diuji di salinan: pratinjau -> catat salinan -> migrasi terverifikasi -> jalan kedua ditolak sebagai "sudah-pernah". Spreadsheet produksi tidak dibuka untuk ditulis.'
+      : 'Ada langkah yang tidak sesuai harapan. Periksa laporan.migrasi dan laporan.migrasiKedua sebelum mencoba di spreadsheet sungguhan.';
+  } catch (err) {
+    laporan.status = 'error';
+    laporan.pesan = 'Uji berhenti: ' + (err && err.message ? err.message : String(err));
+  }
+
+  laporan.propertyProduksiTersentuh = propsLive
+    ? (_mcCuplikanProps(propsLive) !== sebelumProps)
+    : null;
 
   return _bfJson(laporan);
 }

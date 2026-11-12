@@ -13,43 +13,10 @@
  * Semua test memakai fixture 525 baris supaya batas blok yang sebenarnya
  * (2..101, 102..201, ... 502..525) ikut teruji.
  */
-const { createGasMock, loadBackendBackfill, createRunner } = require('./helpers');
+// H13, PRODUK, dan penjualanRows() adalah FIXTURE BERSAMA: didefinisikan di
+// tests/helpers.js supaya tools/uji_migrasi_lokal.js memakai data yang sama.
+const { createGasMock, loadBackendBackfill, createRunner, H13, PRODUK, penjualanRows } = require('./helpers');
 const r = createRunner();
-
-const H13 = ['ID Transaksi', 'Tanggal', 'Nama Produk', 'Volume (ml)', 'HPP Satuan', 'Jumlah', 'Total Harga',
-  'Metode Pembayaran', 'Uang Dibayar', 'Uang Kembali', 'Modal', 'Biaya Operasional', 'Laba bersih'];
-
-const PRODUK = [
-  ['ID Produk', 'Nama Produk', 'Stok', 'Harga', 'foto_url', 'HPP', 'volume_ml'],
-  ['SL0001', 'Semangci 250 ml', 50, 10000, '', 7500, 250],
-  ['MO0001', 'Semangsu 350 ml', 20, 15000, '', 10000, 350],
-  ['WO0001', 'Wonapel 350 ml', 20, 15000, '', 10500, 350]
-];
-
-/**
- * 525 baris (1 header + 524 data) supaya lastRow = 525 dan keenam blok
- * terisi.:
- *   baris 2   TERCATAT     (Semangci 250, kolom E 7500 = master)
- *   baris 3   KOREKSI      (Semangsu, kolom E 9000 vs keputusan 10000)
- *   baris 4   ESTIMASI     (Wonapel, kolom E kosong)
- *   baris 5   DIKECUALIKAN (Semangka Potong, tidak ada di master)
- *   baris 502 TERCATAT     (di blok 6 - membuktikan V-5 tetap berlaku per blok)
- *   baris 503 KOREKSI      (di blok 6 - V-5 TIDAK boleh pakai N==K di sini)
- *   sisanya    ESTIMASI
- */
-function penjualanRows() {
-  const rows = [H13.slice()];
-  const est = (i) => ['FR-EST-' + i, '01/09/2026 08:00', 'Semangci 250 ml', '', '', 1, 10000, 'CASH', 10000, 0, 0, 0, 10000];
-  rows.push(['FR-TER-1', '28/09/2026 07:00', 'Semangci 250 ml', 250, 7500, 1, 10000, 'CASH', 10000, 0, 7500, 0, 2500]);
-  rows.push(['FR-KOR-1', '27/09/2026 07:00', 'Semangsu 350 ml', 350, 9000, 3, 45000, 'CASH', 45000, 0, 27000, 0, 18000]);
-  rows.push(['FR-EST-1', '26/09/2026 11:34', 'Wonapel 350 ml', '', '', 1, 15000, 'CASH', 15000, 0, 0, 0, 15000]);
-  rows.push(['FR-DIKE-1', '05/09/2026 09:00', 'Semangka Potong', '', '', 1, 10000, 'QRIS', 10000, 0, 0, 0, 10000]);
-  for (let n = 6; n <= 501; n++) rows.push(est(n));
-  rows.push(['FR-TER-6', '28/09/2026 09:00', 'Semangci 250 ml', 250, 7500, 1, 10000, 'CASH', 10000, 0, 7500, 0, 2500]);
-  rows.push(['FR-KOR-6', '27/09/2026 09:00', 'Semangsu 350 ml', 350, 9000, 1, 15000, 'CASH', 15000, 0, 9000, 0, 6000]);
-  for (let n = 504; n <= 525; n++) rows.push(est(n));
-  return rows;
-}
 
 function setup(opts) {
   const o = opts || {};
@@ -892,6 +859,137 @@ r.suite('Migrasi multi-cabang - verifikasi salinan manual', () => {
     r.assertIncludes(out.pesan, 'header sheet Penjualan', 'pesan menunjuk header Penjualan');
     r.assertEq(s.gas.scriptRuntime.props.MC_SALINAN_SPREADSHEET, undefined,
       'property salinan TIDAK boleh tersimpan');
+  });
+});
+
+// ════════════════════════════════════════════════════════════════
+// Migrasi multi-cabang — uji end-to-end di salinan
+//
+// ujiMigrasiMultiCabangDiSalinan() ada justru supaya jalur migrasi bisa
+// dicoba tanpa menyentuh produksi. Test di bawah menjaga dua janji itu:
+// produksi ditolak sebagai target, dan Script Properties produksi tidak
+// ikut berubah walau rantai migrasinya berhasil penuh.
+// ════════════════════════════════════════════════════════════════
+function setupUjiSalinan(opts) {
+  const o = opts || {};
+  const gas = createGasMock();
+  gas.scriptRuntime.props.ENV = 'production';
+  gas.scriptRuntime.props.SS_ID_PROD = 'SUMBER-1';
+
+  const sumber = gas.createSpreadsheetMock(PRODUK, {
+    ssId: 'SUMBER-1', ssName: 'POS Flourich',
+    penjualanRows: penjualanRows(), penjualanGridCols: 29
+  });
+  const target = gas.createSpreadsheetMock(PRODUK, {
+    ssId: 'SALINAN-1', ssName: 'SALINAN migrasi', penjualanRows: penjualanRows()
+  });
+  const cadangan = gas.createSpreadsheetMock(PRODUK, {
+    ssId: 'CADANGAN-1', ssName: 'SALINAN cadangan',
+    penjualanRows: o.cadanganRows || penjualanRows()
+  });
+
+  gas.scriptRuntime.activeSpreadsheet = sumber;
+  gas.scriptRuntime.spreadsheets = {
+    'SUMBER-1': sumber, 'SALINAN-1': target, 'CADANGAN-1': cadangan
+  };
+
+  return { gas, sumber, target, cadangan, backend: loadBackendBackfill(gas) };
+}
+
+r.suite('Migrasi multi-cabang - uji end-to-end di salinan', () => {
+  r.test('target = spreadsheet PRODUKSI -> ditolak', () => {
+    const s = setupUjiSalinan();
+    const out = call(() => s.backend.sandbox.ujiMigrasiMultiCabangDiSalinan('SUMBER-1', 'CADANGAN-1'));
+
+    r.assertEq(out.status, 'error', 'status error');
+    r.assertIncludes(out.pesan, 'PRODUKSI', 'pesan menyebut produksi');
+    r.assertEq(s.sumber.__penjualan.getLastColumn(), 13, 'Penjualan produksi tetap 13 kolom');
+  });
+
+  r.test('target dan cadangan ID sama -> ditolak sebelum membuka apa pun', () => {
+    const s = setupUjiSalinan();
+    const out = call(() => s.backend.sandbox.ujiMigrasiMultiCabangDiSalinan('SALINAN-1', 'SALINAN-1'));
+
+    r.assertEq(out.status, 'batal', 'status batal');
+    r.assertIncludes(out.pesan, 'sama', 'pesan menyebut ID sama');
+  });
+
+  r.test('rantai penuh di salinan: pratinjau -> catat -> migrasi -> sudah-pernah', () => {
+    const s = setupUjiSalinan();
+    const snapProduksi = snap(s.sumber.__penjualan);
+    const out = call(() => s.backend.sandbox.ujiMigrasiMultiCabangDiSalinan('SALINAN-1', 'CADANGAN-1'));
+
+    r.assertEq(out.status, 'ok', 'status ok: ' + out.pesan);
+    r.assertEq(out.pratinjau.spreadsheet.id, 'SALINAN-1', 'pratinjau membaca salinan');
+    r.assertEq(out.catatSalinan.status, 'ok', 'cadangan lolos verifikasi');
+    r.assertEq(out.salinanTercatatDiPropsUji, 'CADANGAN-1', 'cadangan tercatat di props UJI');
+    r.assertEq(out.migrasi.status, 'selesai', 'migrasi selesai');
+    r.assertEq(out.migrasi.verifikasi.ok, true, 'verifikasi baca-balik lolos');
+    r.assertEq(out.migrasiKedua.status, 'sudah-pernah', 'jalan kedua tidak menulis apa pun');
+
+    // Salinan benar-benar berubah...
+    r.assertEq(out.sebelum.penjualan.punyaCabang, false, 'sebelum: belum ada Cabang');
+    r.assertEq(out.sesudah.penjualan.punyaCabang, true, 'sesudah: kolom Cabang ada');
+    r.assertEq(out.sesudah.penjualan.barisData, out.sebelum.penjualan.barisData,
+      'jumlah baris penjualan tidak berubah');
+    r.assertEq(out.sesudah.stokCabang.ada, true, 'Stok_Cabang dibuat di salinan');
+
+    // ...produksi tidak.
+    r.assertEq(out.propertyProduksiTersentuh, false, 'Script Properties produksi tidak berubah');
+    r.assertEq(s.gas.scriptRuntime.props.MC_SALINAN_SPREADSHEET, undefined,
+      'MC_SALINAN produksi tetap kosong');
+    r.assertEq(s.gas.scriptRuntime.props.MC_MIGRASI_SELESAI, undefined,
+      'MC_MIGRASI_SELESAI produksi tetap kosong');
+    r.assertEq(snap(s.sumber.__penjualan), snapProduksi, 'sheet Penjualan produksi identik');
+    r.assertEq(s.sumber.getSheetByName('Stok_Cabang'), null, 'produksi tidak dapat sheet Stok_Cabang');
+  });
+
+  // ── Berhenti di TENGAH: migrasi belum (atau tidak) dijalankan ──
+  // Justru di jalur inilah godaan "tulis dulu, benahi nanti" paling besar:
+  // uji berhenti sebelum menulis apa pun, dan guard produksi harus tetap
+  // bersih supaya migrasi sungguhan tidak mengira cadangan sudah tercatat
+  // atau migrasi sudah pernah jalan.
+
+  r.test('cadangan BASI -> berhenti sebelum migrasi; produksi & target utuh', () => {
+    const s = setupUjiSalinan({ cadanganRows: [H13.slice(), penjualanRows()[1]] });
+    const snapProduksi = snap(s.sumber.__penjualan);
+    const out = call(() => s.backend.sandbox.ujiMigrasiMultiCabangDiSalinan('SALINAN-1', 'CADANGAN-1'));
+
+    r.assertEq(out.status, 'batal', 'status batal');
+    r.assertIncludes(out.pesan, 'Berhenti di pencatatan salinan', 'berhenti di langkah salinan');
+    r.assertEq(out.catatSalinan.status, 'error', 'cadangan ditolak verifikasi');
+    r.assertEq(out.migrasi, undefined, 'migrasi TIDAK dipanggil');
+
+    r.assertEq(out.propertyProduksiTersentuh, false, 'Script Properties produksi tidak berubah');
+    r.assertEq(s.gas.scriptRuntime.props.MC_SALINAN_SPREADSHEET, undefined,
+      'MC_SALINAN produksi tetap kosong');
+    r.assertEq(s.gas.scriptRuntime.props.MC_MIGRASI_SELESAI, undefined,
+      'MC_MIGRASI_SELESAI produksi tetap kosong');
+
+    // Target pun tidak tersentuh: berhenti berarti berhenti.
+    r.assertEq(s.target.__penjualan.getLastColumn(), 13, 'Penjualan salinan tetap 13 kolom');
+    r.assertEq(s.target.getSheetByName('Stok_Cabang'), null, 'salinan belum dapat Stok_Cabang');
+    r.assertEq(snap(s.sumber.__penjualan), snapProduksi, 'sheet Penjualan produksi identik');
+  });
+
+  r.test('ID cadangan tidak bisa dibuka -> error; produksi & target utuh', () => {
+    const s = setupUjiSalinan();
+    const snapProduksi = snap(s.sumber.__penjualan);
+    const out = call(() => s.backend.sandbox.ujiMigrasiMultiCabangDiSalinan('SALINAN-1', 'CADANGAN-TIDAK-ADA'));
+
+    r.assertEq(out.status, 'error', 'status error');
+    r.assertIncludes(out.pesan, 'Tidak ditemukan', 'pesan menyebut file tidak ditemukan');
+    r.assertEq(out.migrasi, undefined, 'migrasi TIDAK dipanggil');
+
+    r.assertEq(out.propertyProduksiTersentuh, false, 'Script Properties produksi tidak berubah');
+    r.assertEq(s.gas.scriptRuntime.props.MC_SALINAN_SPREADSHEET, undefined,
+      'MC_SALINAN produksi tetap kosong');
+    r.assertEq(s.gas.scriptRuntime.props.MC_MIGRASI_SELESAI, undefined,
+      'MC_MIGRASI_SELESAI produksi tetap kosong');
+
+    r.assertEq(s.target.__penjualan.getLastColumn(), 13, 'Penjualan salinan tetap 13 kolom');
+    r.assertEq(s.target.getSheetByName('Stok_Cabang'), null, 'salinan belum dapat Stok_Cabang');
+    r.assertEq(snap(s.sumber.__penjualan), snapProduksi, 'sheet Penjualan produksi identik');
   });
 });
 

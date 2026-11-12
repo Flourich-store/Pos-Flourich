@@ -781,4 +781,54 @@ function createRunner() {
   return { suite, test, assertEq, assertOk, assertArray, assertIncludes, assertNotIncludes, assertFalse, assertDoesNotThrow, run };
 }
 
-module.exports = { createGasMock, loadBackend, loadBackendDiagnostik, loadBackendBackfill, createDomStub, loadFrontend, createRunner };
+// ════════════════════════════════════════════════════════════════
+// FIXTURE BERSAMA — bentuk data POS Flourich yang sebenarnya
+//
+// Dipakai tests/backfill.test.js DAN tools/uji_migrasi_lokal.js. Dulu
+// runner lokal mendefinisikan sendiri produk & baris penjualannya, sehingga
+// "lulus di runner" belum tentu berarti "lulus di test" (dan sebaliknya)
+// begitu salah satunya diubah. Satu sumber data menutup celah itu.
+// ════════════════════════════════════════════════════════════════
+
+/** Header 13 kolom sheet Penjualan (era sekarang, Volume/HPP di tengah). */
+const H13 = ['ID Transaksi', 'Tanggal', 'Nama Produk', 'Volume (ml)', 'HPP Satuan', 'Jumlah', 'Total Harga',
+  'Metode Pembayaran', 'Uang Dibayar', 'Uang Kembali', 'Modal', 'Biaya Operasional', 'Laba bersih'];
+
+/** Master Produk: 3 SKU dengan stok, harga, HPP, dan volume. */
+const PRODUK = [
+  ['ID Produk', 'Nama Produk', 'Stok', 'Harga', 'foto_url', 'HPP', 'volume_ml'],
+  ['SL0001', 'Semangci 250 ml', 50, 10000, '', 7500, 250],
+  ['MO0001', 'Semangsu 350 ml', 20, 15000, '', 10000, 350],
+  ['WO0001', 'Wonapel 350 ml', 20, 15000, '', 10500, 350]
+];
+
+/**
+ * 525 baris (1 header + 524 data) supaya lastRow = 525 dan keenam blok
+ * backfill terisi:
+ *   baris 2   TERCATAT     (Semangci 250, kolom E 7500 = master)
+ *   baris 3   KOREKSI      (Semangsu, kolom E 9000 vs keputusan 10000)
+ *   baris 4   ESTIMASI     (Wonapel, kolom E kosong)
+ *   baris 5   DIKECUALIKAN (Semangka Potong, tidak ada di master)
+ *   baris 502 TERCATAT     (di blok 6 - membuktikan V-5 tetap berlaku per blok)
+ *   baris 503 KOREKSI      (di blok 6 - V-5 TIDAK boleh pakai N==K di sini)
+ *   sisanya    ESTIMASI
+ */
+function penjualanRows() {
+  const rows = [H13.slice()];
+  const est = (i) => ['FR-EST-' + i, '01/09/2026 08:00', 'Semangci 250 ml', '', '', 1, 10000, 'CASH', 10000, 0, 0, 0, 10000];
+  rows.push(['FR-TER-1', '28/09/2026 07:00', 'Semangci 250 ml', 250, 7500, 1, 10000, 'CASH', 10000, 0, 7500, 0, 2500]);
+  rows.push(['FR-KOR-1', '27/09/2026 07:00', 'Semangsu 350 ml', 350, 9000, 3, 45000, 'CASH', 45000, 0, 27000, 0, 18000]);
+  rows.push(['FR-EST-1', '26/09/2026 11:34', 'Wonapel 350 ml', '', '', 1, 15000, 'CASH', 15000, 0, 0, 0, 15000]);
+  rows.push(['FR-DIKE-1', '05/09/2026 09:00', 'Semangka Potong', '', '', 1, 10000, 'QRIS', 10000, 0, 0, 0, 10000]);
+  for (let n = 6; n <= 501; n++) rows.push(est(n));
+  rows.push(['FR-TER-6', '28/09/2026 09:00', 'Semangci 250 ml', 250, 7500, 1, 10000, 'CASH', 10000, 0, 7500, 0, 2500]);
+  rows.push(['FR-KOR-6', '27/09/2026 09:00', 'Semangsu 350 ml', 350, 9000, 1, 15000, 'CASH', 15000, 0, 9000, 0, 6000]);
+  for (let n = 504; n <= 525; n++) rows.push(est(n));
+  return rows;
+}
+
+module.exports = {
+  createGasMock, loadBackend, loadBackendDiagnostik, loadBackendBackfill,
+  createDomStub, loadFrontend, createRunner,
+  H13, PRODUK, penjualanRows
+};
