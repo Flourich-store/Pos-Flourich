@@ -852,3 +852,487 @@ function rollbackBlok3() { return rollbackBlok(3); }
 function rollbackBlok4() { return rollbackBlok(4); }
 function rollbackBlok5() { return rollbackBlok(5); }
 function rollbackBlok6() { return rollbackBlok(6); }
+
+// ════════════════════════════════════════════════════════════════
+// MIGRASI MULTI-CABANG — SEKALI JALAN, ADITIF, TANPA MENGGESER KOLOM
+//
+// Yang dilakukan (dan HANYA ini):
+//  1) Penjualan   : + header "Cabang" di kolom paling KANAN, semua baris
+//                   lama diisi "PUSAT". Tidak ada nilai lama diubah.
+//  2) User        : + header "Cabang" di kolom paling KANAN, semua baris
+//                   lama diisi "PUSAT".
+//  3) Stok_Cabang : sheet BARU berisi ID Produk | PUSAT, disalin dari kolom
+//                   Stok di sheet Produk. Sheet Produk TIDAK diubah.
+//
+// KENAPA DI PALING KANAN, BUKAN DISISIPKAN SETELAH "Tanggal":
+//  Kolom N..R di Penjualan dipakai staging backfill (file ini). Menyisipkan
+//  kolom di tengah menggeser blok itu satu kolom dan membuat semua aturan
+//  posisional di atas salah. Menambah di ujung tidak menggeser apa pun, dan
+//  pemetaan kolom Code.js berbasis NAMA HEADER sehingga posisi tidak penting.
+//
+// ATURAN PAKAI (permukaan yang bisa salah ditekan sengaja dikecilkan):
+//  1. pratinjauMigrasiMultiCabang()      READ-ONLY. Tunjukkan rencana.
+//  2. siapkanSalinanMigrasiMultiCabang() buat salinan spreadsheet & catat
+//     ID-nya. TANPA salinan tercatat, migrasi MENOLAK jalan.
+//     Bila scope Drive belum tersedia: salin manual (File > Make a copy),
+//     lalu catat lewat catatSalinanMigrasiManual('<ID salinan>').
+//  3. migrasiMultiCabang()               jalankan SEKALI. Idempoten: bila
+//     penanda selesai sudah ada, batal tanpa menulis.
+//
+// Sifat fail-CLOSED: kunci tulis tidak didapat = batal, bukan dipaksa jalan
+// (berbeda dari denganKunciTulis() di Code.js yang demi kasir tetap lanjut).
+// ════════════════════════════════════════════════════════════════
+
+/** Kode cabang untuk seluruh data lama. */
+const MC_CABANG_AWAL = 'PUSAT';
+const MC_HEADER_CABANG = 'Cabang';
+const MC_NAMA_SHEET_STOK = 'Stok_Cabang';
+const MC_PROPS_SALINAN = 'MC_SALINAN_SPREADSHEET';
+const MC_PROPS_SELESAI = 'MC_MIGRASI_SELESAI';
+const MC_KUNCI_MS = 60000;
+
+/** Indeks kolom (0-based) dari nama header; -1 bila tidak ada. */
+function _mcIdxHeader(header, nama) {
+  const target = String(nama).toLowerCase().trim();
+  for (let i = 0; i < header.length; i++) {
+    if (String(_bfSel(header[i])).toLowerCase().trim() === target) return i;
+  }
+  return -1;
+}
+
+/** Header baris 1 + lebar kolom terakhir yang berisi. */
+function _mcHeader(sh) {
+  const lebar = Math.max(1, sh.getLastColumn());
+  const baris = sh.getRange(1, 1, 1, lebar).getValues()[0] || [];
+  return { header: baris, lebar: lebar };
+}
+
+/**
+ * Rencana migrasi — HANYA MEMBACA. Tidak ada setValue/setValues di sini.
+ */
+function _mcPratinjau(ss) {
+  const out = {
+    status: 'ok',
+    spreadsheet: { nama: ss.getName(), id: ss.getId() },
+    salinanTercatat: '',
+    sudahMigrasi: '',
+    langkah: [],
+    peringatan: [],
+    penghalang: []
+  };
+
+  try {
+    const props = PropertiesService.getScriptProperties();
+    out.salinanTercatat = props.getProperty(MC_PROPS_SALINAN) || '';
+    out.sudahMigrasi = props.getProperty(MC_PROPS_SELESAI) || '';
+  } catch (e) { /* props tidak tersedia di uji */ }
+
+  // ── Penjualan ──
+  const shJual = ss.getSheetByName('Penjualan');
+  if (!shJual) {
+    out.penghalang.push('Sheet Penjualan tidak ditemukan');
+  } else {
+    const h = _mcHeader(shJual);
+    const idxCab = _mcIdxHeader(h.header, MC_HEADER_CABANG);
+    const barisData = _bfHitungBarisData(shJual);
+    out.penjualan = {
+      kolomSekarang: h.lebar,
+      header: h.header.map(_bfSel),
+      kolomCabang: idxCab < 0 ? 'BELUM ADA' : (idxCab + 1),
+      barisData: barisData,
+      aksi: idxCab < 0
+        ? 'Tambah header "' + MC_HEADER_CABANG + '" di kolom ' + (h.lebar + 1) +
+          ', isi ' + barisData + ' baris lama dengan "' + MC_CABANG_AWAL + '"'
+        : 'Tidak diubah (kolom Cabang sudah ada)'
+    };
+    out.langkah.push('Penjualan: ' + out.penjualan.aksi);
+  }
+
+  // ── User ──
+  const shUser = ss.getSheetByName('User');
+  if (!shUser) {
+    out.penghalang.push('Sheet User tidak ditemukan');
+  } else {
+    const h = _mcHeader(shUser);
+    const idxCab = _mcIdxHeader(h.header, MC_HEADER_CABANG);
+    const lastRow = shUser.getLastRow();
+    const jumlahUser = Math.max(0, lastRow - 1);
+    out.user = {
+      kolomSekarang: h.lebar,
+      header: h.header.map(_bfSel),
+      kolomCabang: idxCab < 0 ? 'BELUM ADA' : (idxCab + 1),
+      jumlahUser: jumlahUser,
+      aksi: idxCab < 0
+        ? 'Tambah header "' + MC_HEADER_CABANG + '" di kolom ' + (h.lebar + 1) +
+          ', isi ' + jumlahUser + ' user lama dengan "' + MC_CABANG_AWAL + '"'
+        : 'Tidak diubah (kolom Cabang sudah ada)'
+    };
+    out.langkah.push('User: ' + out.user.aksi);
+
+    // SUPER_ADMIN biasanya TIDAK terikat satu cabang. Migrasi ini tetap
+    // mengisi PUSAT (sesuai permintaan), jadi daftarnya dilaporkan agar
+    // pemilik bisa mengosongkannya sendiri bila perlu.
+    if (lastRow >= 2) {
+      const rows = shUser.getRange(2, 1, lastRow - 1, Math.max(3, h.lebar)).getValues();
+      const superAdmin = [];
+      for (const r of rows) {
+        const nama = String(_bfSel(r[0])).trim();
+        const role = String(_bfSel(r[2])).toUpperCase().trim();
+        if (nama && role === 'SUPER_ADMIN') superAdmin.push(nama);
+      }
+      if (superAdmin.length) {
+        out.peringatan.push('Baris SUPER_ADMIN ikut terisi "' + MC_CABANG_AWAL + '": ' +
+          superAdmin.join(', ') + ' — kosongkan kolom Cabang-nya bila user ini harus lintas cabang.');
+      }
+    }
+  }
+
+  // ── Produk & Stok_Cabang ──
+  const shProduk = ss.getSheetByName('Produk');
+  const shStok = ss.getSheetByName(MC_NAMA_SHEET_STOK);
+  if (!shProduk) {
+    out.penghalang.push('Sheet Produk tidak ditemukan');
+  } else {
+    const peta = petaKolomProdukSheet(shProduk);
+    if (peta.col.id === undefined || peta.col.stok === undefined) {
+      out.penghalang.push('Header sheet Produk tidak lengkap (butuh "ID Produk" dan "Stok")');
+    } else {
+      const data = shProduk.getDataRange().getValues();
+      let jumlah = 0;
+      let total = 0;
+      const contoh = [];
+      for (let i = 1; i < data.length; i++) {
+        const id = String(ambilKolom(data[i], peta, 'id', '')).trim();
+        if (!id) continue;
+        const stok = ambilKolomAngka(data[i], peta, 'stok', 0);
+        jumlah++;
+        total += stok;
+        if (contoh.length < 3) contoh.push({ id: id, stok: stok });
+      }
+      out.produk = {
+        jumlahProduk: jumlah,
+        kolomStok: peta.col.stok + 1,
+        totalStok: total,
+        contoh: contoh
+      };
+      out.stokCabang = {
+        sheetAda: !!shStok,
+        header: shStok ? _mcHeader(shStok).header.map(_bfSel) : null,
+        aksi: shStok
+          ? (shStok.getLastRow() >= 2
+            ? 'DIBATALKAN: sheet ' + MC_NAMA_SHEET_STOK + ' sudah berisi data (tidak akan ditimpa)'
+            : 'Isi sheet ' + MC_NAMA_SHEET_STOK + ' yang sudah ada dengan ' + jumlah + ' produk')
+          : 'Buat sheet ' + MC_NAMA_SHEET_STOK + ' (ID Produk | ' + MC_CABANG_AWAL + ') berisi ' + jumlah + ' produk'
+      };
+      if (shStok && shStok.getLastRow() >= 2) {
+        out.penghalang.push('Sheet ' + MC_NAMA_SHEET_STOK + ' sudah berisi data');
+      }
+      out.langkah.push('Stok_Cabang: ' + out.stokCabang.aksi + ', total stok ' + total);
+    }
+  }
+
+  return out;
+}
+
+/** Pratinjau READ-ONLY untuk dijalankan dari dropdown editor. */
+function pratinjauMigrasiMultiCabang() {
+  return _bfJson(_mcPratinjau(getSpreadsheet()));
+}
+
+/**
+ * Langkah 1: buat salinan spreadsheet & catat ID-nya.
+ * Menolak (tidak menimpa) bila salinan sudah tercatat.
+ */
+function siapkanSalinanMigrasiMultiCabang() {
+  const out = { status: 'batal', langkah: [], peringatan: [] };
+  try {
+    const ss = getSpreadsheet();
+    const props = PropertiesService.getScriptProperties();
+
+    const sudah = props.getProperty(MC_PROPS_SALINAN);
+    if (sudah) {
+      out.status = 'sudah-ada';
+      out.salinan = sudah;
+      out.pesan = 'Salinan migrasi sudah tercatat (' + sudah + '). Tidak dibuat salinan baru. ' +
+        'Bila ingin salinan baru, hapus property ' + MC_PROPS_SALINAN + ' lebih dulu.';
+      return _bfJson(out);
+    }
+
+    const zona = ss.getSpreadsheetTimeZone ? ss.getSpreadsheetTimeZone() : 'Asia/Jakarta';
+    let stamp = '';
+    try { stamp = Utilities.formatDate(new Date(), zona, 'dd-MM-yyyy HH.mm'); } catch (e) { stamp = String(new Date().getTime()); }
+    const nama = 'SALINAN migrasi multi-cabang - ' + ss.getName() + ' - ' + stamp;
+
+    // makeCopy butuh scope tulis Drive. appsscript.json proyek ini hanya
+    // punya drive.readonly, jadi jalur ini bisa gagal — dan bila gagal,
+    // migrasi TIDAK boleh jalan (lihat guard di migrasiMultiCabang).
+    const berkas = DriveApp.getFileById(ss.getId()).makeCopy(nama);
+    const id = berkas.getId();
+    props.setProperty(MC_PROPS_SALINAN, id);
+
+    out.status = 'ok';
+    out.salinan = id;
+    out.nama = nama;
+    out.url = (typeof berkas.getUrl === 'function')
+      ? berkas.getUrl()
+      : ('https://docs.google.com/spreadsheets/d/' + id);
+    out.pesan = 'Salinan dibuat & ID-nya dicatat. Migrasi boleh dijalankan.';
+  } catch (e) {
+    out.status = 'error';
+    out.pesan = 'Gagal membuat salinan otomatis: ' + (e && e.message ? e.message : String(e)) +
+      '. appsscript.json proyek ini hanya punya scope "drive.readonly", sedangkan makeCopy butuh scope tulis Drive. ' +
+      'Pilihan: (a) salin manual lewat File > Make a copy lalu jalankan catatSalinanMigrasiManual("<ID salinan>"), ' +
+      'atau (b) tambahkan "https://www.googleapis.com/auth/drive" ke oauthScopes lalu setujui ulang izin script.';
+  }
+  return _bfJson(out);
+}
+
+/**
+ * Catat salinan yang dibuat MANUAL (File > Make a copy).
+ * Menerima ID maupun URL spreadsheet salinan.
+ */
+function catatSalinanMigrasiManual(idAtauUrl) {
+  const out = { status: 'batal' };
+  const teks = String(idAtauUrl == null ? '' : idAtauUrl).trim();
+  if (!teks) {
+    out.pesan = 'Sebutkan ID atau URL spreadsheet salinan, mis. catatSalinanMigrasiManual("1AbC...").';
+    return _bfJson(out);
+  }
+  // Ambil ID dari URL bentuk /spreadsheets/d/<ID>/...
+  let id = teks;
+  const cocok = teks.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+  if (cocok) id = cocok[1];
+
+  try {
+    const ss = getSpreadsheet();
+    if (id === ss.getId()) {
+      out.pesan = 'ID yang dicatat adalah spreadsheet SUMBER, bukan salinan. Migrasi butuh cadangan terpisah.';
+      return _bfJson(out);
+    }
+    PropertiesService.getScriptProperties().setProperty(MC_PROPS_SALINAN, id);
+    out.status = 'ok';
+    out.salinan = id;
+    out.pesan = 'Salinan manual dicatat. Migrasi boleh dijalankan. Pastikan salinan itu benar-benar ada dan milik spreadsheet ini.';
+  } catch (e) {
+    out.status = 'error';
+    out.pesan = 'Gagal mencatat salinan: ' + (e && e.message ? e.message : String(e));
+  }
+  return _bfJson(out);
+}
+
+/**
+ * Tambah kolom Cabang di kolom paling kanan sebuah sheet + isi baris lama.
+ * Idempoten: bila header Cabang sudah ada, tidak menulis apa pun.
+ */
+function _mcTambahKolomCabang(sh) {
+  if (!sh) throw new Error('Sheet tidak ditemukan');
+  const h = _mcHeader(sh);
+  const idxAda = _mcIdxHeader(h.header, MC_HEADER_CABANG);
+  if (idxAda >= 0) {
+    return { sudahAda: true, kolom: idxAda + 1, diisi: 0 };
+  }
+
+  const kolom = h.lebar + 1;
+  sh.getRange(1, kolom).setValue(MC_HEADER_CABANG);
+
+  const lastRow = sh.getLastRow();
+  let diisi = 0;
+  if (lastRow >= 2) {
+    const n = lastRow - 1;
+    const nilai = [];
+    for (let i = 0; i < n; i++) nilai.push([MC_CABANG_AWAL]);
+    sh.getRange(2, kolom, n, 1).setValues(nilai);
+    diisi = n;
+  }
+  return { sudahAda: false, kolom: kolom, diisi: diisi };
+}
+
+/**
+ * Buat/isi sheet Stok_Cabang dari kolom Stok di sheet Produk.
+ * Menolak menimpa bila sheet sudah berisi data.
+ */
+function _mcSiapkanStokCabang(ss) {
+  const shProduk = ss.getSheetByName('Produk');
+  if (!shProduk) throw new Error('Sheet Produk tidak ditemukan');
+
+  const peta = petaKolomProdukSheet(shProduk);
+  if (peta.col.id === undefined || peta.col.stok === undefined) {
+    throw new Error('Header sheet Produk tidak lengkap (butuh "ID Produk" dan "Stok")');
+  }
+
+  const data = shProduk.getDataRange().getValues();
+  const baris = [['ID Produk', MC_CABANG_AWAL]];
+  let total = 0;
+  for (let i = 1; i < data.length; i++) {
+    const id = String(ambilKolom(data[i], peta, 'id', '')).trim();
+    if (!id) continue;
+    const stok = ambilKolomAngka(data[i], peta, 'stok', 0);
+    baris.push([id, stok]);
+    total += stok;
+  }
+
+  let sh = ss.getSheetByName(MC_NAMA_SHEET_STOK);
+  let dibuat = false;
+  if (sh && sh.getLastRow() >= 2) {
+    throw new Error('Sheet ' + MC_NAMA_SHEET_STOK + ' sudah berisi data — migrasi tidak menimpanya.');
+  }
+  if (!sh) {
+    sh = ss.insertSheet(MC_NAMA_SHEET_STOK);
+    dibuat = true;
+  }
+  sh.getRange(1, 1, baris.length, 2).setValues(baris);
+
+  return { dibuat: dibuat, jumlahProduk: baris.length - 1, totalStok: total };
+}
+
+/** Baca balik hasil migrasi — bukan percaya pada nilai yang baru ditulis. */
+function _mcVerifikasi(ss, kolomJual, kolomUser, hasilStok) {
+  const v = {};
+
+  const shJual = ss.getSheetByName('Penjualan');
+  const hJual = _mcHeader(shJual);
+  v.headerPenjualan = _mcIdxHeader(hJual.header, MC_HEADER_CABANG) >= 0;
+
+  const lastRowJual = shJual.getLastRow();
+  let terisiJual = 0;
+  if (lastRowJual >= 2) {
+    const vals = shJual.getRange(2, kolomJual, lastRowJual - 1, 1).getValues();
+    for (const r of vals) if (String(_bfSel(r[0])).trim() !== '') terisiJual++;
+  }
+  v.barisPenjualanTerisi = terisiJual;
+  v.isiPenjualanLengkap = (terisiJual === _bfHitungBarisData(shJual));
+
+  const shUser = ss.getSheetByName('User');
+  const hUser = _mcHeader(shUser);
+  v.headerUser = _mcIdxHeader(hUser.header, MC_HEADER_CABANG) >= 0;
+
+  const lastRowUser = shUser.getLastRow();
+  let terisiUser = 0;
+  if (lastRowUser >= 2) {
+    const vals = shUser.getRange(2, kolomUser, lastRowUser - 1, 1).getValues();
+    for (const r of vals) if (String(_bfSel(r[0])).trim() !== '') terisiUser++;
+  }
+  v.barisUserTerisi = terisiUser;
+  v.isiUserLengkap = (terisiUser === Math.max(0, lastRowUser - 1));
+
+  const shStok = ss.getSheetByName(MC_NAMA_SHEET_STOK);
+  if (!shStok) {
+    v.sheetStokAda = false;
+    v.totalStokCocok = false;
+    v.jumlahProdukCocok = false;
+  } else {
+    v.sheetStokAda = true;
+    const lastRow = shStok.getLastRow();
+    let total = 0;
+    let jumlah = 0;
+    if (lastRow >= 2) {
+      const vals = shStok.getRange(2, 1, lastRow - 1, 2).getValues();
+      for (const r of vals) {
+        if (String(_bfSel(r[0])).trim() === '') continue;
+        jumlah++;
+        total += Number(r[1]) || 0;
+      }
+    }
+    v.jumlahProdukStok = jumlah;
+    v.jumlahProdukCocok = (jumlah === hasilStok.jumlahProduk);
+    v.totalStokCocok = (total === hasilStok.totalStok);
+  }
+
+  v.ok = !!(v.headerPenjualan && v.headerUser && v.sheetStokAda &&
+    v.isiPenjualanLengkap && v.isiUserLengkap &&
+    v.jumlahProdukCocok && v.totalStokCocok);
+  return v;
+}
+
+/**
+ * Langkah 2 (SEKALI JALAN): migrasi multi-cabang.
+ *
+ * Urutan: guard kunci tulis (fail-CLOSED) -> guard salinan -> guard
+ * idempoten -> pratinjau -> tulis -> verifikasi baca-balik.
+ * Tidak ada rollback otomatis: kalau verifikasi gagal, laporan menyuruh
+ * memulihkan dari salinan yang sudah dibuat di langkah 1.
+ */
+function migrasiMultiCabang() {
+  const laporan = { status: 'batal', langkah: [], peringatan: [], verifikasi: {} };
+
+  let kunci = null;
+  let pegang = false;
+  try {
+    kunci = LockService.getScriptLock();
+    pegang = !!(kunci && typeof kunci.tryLock === 'function' && kunci.tryLock(MC_KUNCI_MS));
+  } catch (e) {
+    pegang = false;
+  }
+  if (!pegang) {
+    laporan.pesan = 'Kunci tulis script-wide TIDAK didapat dalam ' + (MC_KUNCI_MS / 1000) +
+      ' detik. Migrasi DIBATALKAN tanpa menulis satu sel pun (fail-CLOSED). Coba lagi saat POS sepi.';
+    return _bfJson(laporan);
+  }
+
+  try {
+    const ss = getSpreadsheet();
+    const props = PropertiesService.getScriptProperties();
+
+    if (!props.getProperty(MC_PROPS_SALINAN)) {
+      laporan.pesan = 'Belum ada salinan spreadsheet yang tercatat. Jalankan ' +
+        'siapkanSalinanMigrasiMultiCabang() (atau catatSalinanMigrasiManual("<ID>")) lebih dulu. ' +
+        'Migrasi menolak jalan tanpa cadangan.';
+      return _bfJson(laporan);
+    }
+
+    const sudah = props.getProperty(MC_PROPS_SELESAI);
+    if (sudah) {
+      laporan.status = 'sudah-pernah';
+      laporan.pesan = 'Migrasi sudah pernah dijalankan pada ' + sudah + '. Tidak ada yang ditulis.';
+      return _bfJson(laporan);
+    }
+
+    const rencana = _mcPratinjau(ss);
+    laporan.peringatan = rencana.peringatan.slice();
+    if (rencana.penghalang.length) {
+      laporan.pesan = 'Dibatalkan sebelum menulis: ' + rencana.penghalang.join('; ');
+      return _bfJson(laporan);
+    }
+
+    // ── 1. Penjualan ──
+    const jual = _mcTambahKolomCabang(ss.getSheetByName('Penjualan'));
+    laporan.langkah.push('Penjualan: ' + (jual.sudahAda
+      ? 'kolom "' + MC_HEADER_CABANG + '" sudah ada di kolom ' + jual.kolom + ' — tidak diubah'
+      : 'header "' + MC_HEADER_CABANG + '" ditulis di kolom ' + jual.kolom + ', ' +
+        jual.diisi + ' baris lama diisi "' + MC_CABANG_AWAL + '"'));
+
+    // ── 2. User ──
+    const user = _mcTambahKolomCabang(ss.getSheetByName('User'));
+    laporan.langkah.push('User: ' + (user.sudahAda
+      ? 'kolom "' + MC_HEADER_CABANG + '" sudah ada di kolom ' + user.kolom + ' — tidak diubah'
+      : 'header "' + MC_HEADER_CABANG + '" ditulis di kolom ' + user.kolom + ', ' +
+        user.diisi + ' baris lama diisi "' + MC_CABANG_AWAL + '"'));
+
+    // ── 3. Stok_Cabang ──
+    const stok = _mcSiapkanStokCabang(ss);
+    laporan.langkah.push('Stok_Cabang: ' + (stok.dibuat ? 'sheet dibuat, ' : 'sheet sudah ada, ') +
+      stok.jumlahProduk + ' produk disalin dari kolom Stok Produk (total ' + stok.totalStok + ')');
+
+    // ── Verifikasi baca-balik ──
+    laporan.verifikasi = _mcVerifikasi(ss, jual.kolom, user.kolom, stok);
+
+    if (laporan.verifikasi.ok) {
+      props.setProperty(MC_PROPS_SELESAI, new Date().toISOString());
+      try { buangCacheAwal(); } catch (e) { /* cache tidak tersedia di uji */ }
+      laporan.status = 'selesai';
+      laporan.pesan = 'Migrasi selesai & terverifikasi. Data lama tidak berubah; hanya kolom Cabang dan sheet Stok_Cabang yang bertambah.';
+    } else {
+      laporan.status = 'perlu-diperiksa';
+      laporan.pesan = 'Penulisan selesai tetapi verifikasi TIDAK lolos. Jangan jalankan ulang. ' +
+        'Periksa laporan.verifikasi, lalu pulihkan sheet dari salinan ' + props.getProperty(MC_PROPS_SALINAN) + ' bila perlu.';
+    }
+  } catch (err) {
+    laporan.status = 'error';
+    laporan.pesan = 'Migrasi berhenti karena error: ' + (err && err.message ? err.message : String(err)) +
+      '. Sebagian langkah mungkin sudah tertulis — periksa laporan.langkah sebelum mengulang, dan pulihkan dari salinan bila ragu.';
+  } finally {
+    try { if (pegang) kunci.releaseLock(); } catch (e) { /* abaikan */ }
+  }
+
+  return _bfJson(laporan);
+}

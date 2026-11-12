@@ -150,16 +150,27 @@ function createGasMock() {
       ['kasir', 'kasir123', 'KASIR']
     ]);
 
+    // Daftar sheet yang hidup, supaya insertSheet() (dipakai migrasi
+    // multi-cabang untuk membuat Stok_Cabang) benar-benar menambah sheet
+    // yang bisa ditemukan lagi lewat getSheetByName().
+    const daftarSheet = [produkSheet, penjualanSheet, userSheet];
+
     return {
       getSpreadsheetTimeZone: () => 'Asia/Jakarta',
       getId: () => (options.ssId || 'MOCK-SS-000'),
       getName: () => (options.ssName || 'Mock Spreadsheet'),
-      getSheets: () => [produkSheet, penjualanSheet, userSheet],
+      getSheets: () => daftarSheet.slice(),
       getSheetByName: (name) => {
         if (name === 'Produk') return options.noProdukSheet ? null : produkSheet;
         if (name === 'Penjualan') return options.noPenjualanSheet ? null : penjualanSheet;
         if (name === 'User') return userSheet;
+        for (const sh of daftarSheet) if (sh.getName() === name) return sh;
         return null;
+      },
+      insertSheet: (nama) => {
+        const baru = makeSheet(nama, [[]]);
+        daftarSheet.push(baru);
+        return baru;
       },
       __produk: produkSheet,
       __penjualan: penjualanSheet,
