@@ -384,6 +384,47 @@ r.suite('v92 endpoint start pintar: catatan tercepat menjadi jalur mulai login',
 
 });
 
+// ════════════════════════════════════════════════════════════════
+// CABANG SESI SETELAH LOGIN (Fase 4)
+// ════════════════════════════════════════════════════════════════
+
+r.suite('Login — cabang sesi disimpan', () => {
+
+  r.test('login sukses menyimpan pos_cabang dari respons server', () => {
+    const sk = loadLoginSkenario({});
+    sk.dom.window.google.script.run.checkLogin = () => ({
+      status: true, username: 'kasir', role: 'KASIR', cabang: 'CABANG-2', dataAwal: RESPON_VALID
+    });
+    isiKredensialAdmin(sk.dom);
+
+    sk.app.call('login');
+
+    r.assertEq(sk.dom.sessionStorage.getItem('pos_cabang'), 'CABANG-2', 'cabang sesi tersimpan');
+  });
+
+  r.test('backend lama tanpa field cabang -> sesi menyimpan string kosong (tidak crash)', () => {
+    const sk = loadLoginSkenario({});
+    sk.dom.window.google.script.run.checkLogin = () => ({
+      status: true, username: 'admin', role: 'SUPER_ADMIN', dataAwal: RESPON_VALID
+    });
+    isiKredensialAdmin(sk.dom);
+
+    sk.app.call('login');
+
+    r.assertEq(sk.dom.sessionStorage.getItem('pos_cabang'), '', 'kosong, bukan undefined');
+  });
+
+  r.test('logout menghapus cabang sesi', () => {
+    const sk = loadLoginSkenario({});
+    sk.dom.sessionStorage.setItem('pos_cabang', 'CABANG-2');
+
+    sk.app.call('logout');
+
+    r.assertEq(sk.dom.sessionStorage.getItem('pos_cabang'), null, 'cabang ikut terhapus saat logout');
+  });
+
+});
+
 r.run('frontend_login.test.js').then(ok => {
   process.exit(ok ? 0 : 1);
 });

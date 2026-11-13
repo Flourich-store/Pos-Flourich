@@ -2377,6 +2377,20 @@
     // Dedup: tiap percobaan checkout diberi koneksiId unik; backend mencatatnya
     // sebagai kunci idempotensi sehingga kirim ulang tidak pernah dobel-catat.
     const QUEUE_KEY = 'pos_offline_queue';
+
+    // ── Cabang sesi (multi-cabang, Fase 4) ──
+    // Disimpan saat login dari respons checkLogin. String kosong = sheet belum
+    // termigrasi / sesi lama; backend memperlakukan '' sebagai "jangan disaring",
+    // jadi sesi lama tetap menampilkan semua data seperti sebelumnya.
+    // Nilai ini TIDAK dipakai untuk menentukan cabang transaksi: server yang
+    // membacanya dari sheet User memakai username (lihat _cabangUntukCheckout).
+    function bacaCabangSesi() {
+      try { return String(sessionStorage.getItem('pos_cabang') || '').trim(); } catch (e) { return ''; }
+    }
+
+    function bacaUsernameSesi() {
+      try { return String(sessionStorage.getItem('pos_username') || '').trim(); } catch (e) { return ''; }
+    }
     const QUEUE_MAKS = 50;      // batas aman agar localStorage tidak membengkak
     const RETRY_MAKS_PER_ITEM = 8; // batas percobaan per item sebelum ditandai gagal permanen
     let isMengirimAntrian = false;
@@ -2424,7 +2438,9 @@
       // yang identik. Jawaban cache instan = UI tetap segar tanpa beban server.
       // trueSync = lewati cache (dipakai saat data HARUS segar, mis. stok setelah checkout).
       const isBaca = action === 'getInitialData';
-      const kunciCache = 'getInitialData';
+      // Kunci cache pendek per cabang: data cabang A tidak boleh disajikan ke
+      // cabang B selama 3 detik cache ini hidup.
+      const kunciCache = 'getInitialData|' + bacaCabangSesi();
       if (isBaca && !trueSync) {
         const cachedRaw = sessionStorage.getItem('pos_api_cache_' + kunciCache);
         if (cachedRaw) {
@@ -2438,13 +2454,28 @@
         }
       }
 
+      // Cabang selalu ikut untuk aksi baca getInitialData, walau pemanggil lupa
+      // mengirimnya. Tanpa itu server tidak menyaring dan kasir cabang melihat
+      // data semua cabang. Argumen pertama (limit) tetap dipertahankan.
+      const argsKirim = Array.isArray(args) ? args.slice() : [args];
+      if (action === 'getInitialData') {
+        if (argsKirim[0] === undefined || argsKirim[0] === null) argsKirim[0] = 60;
+        if (argsKirim.length < 2) argsKirim.push(bacaCabangSesi());
+      }
+
       const bodyPayload = {
         action: action,
-        args: Array.isArray(args) ? args : [args]
+        args: argsKirim
       };
       // koneksiId = kunci idempotensi antrian offline (hanya dikirim untuk aksi
       // tulis tertentu). Backend mencatatnya agar kirim ulang tidak dobel-catat.
       if (koneksiId) bodyPayload.koneksiId = koneksiId;
+      // Identitas untuk checkout: backend memakai username ini untuk membaca
+      // cabang dari sheet User. Cabang TIDAK dikirim dari sini karena klien
+      // tidak boleh menentukan cabang transaksi.
+      if (action === 'prosesCheckout') {
+        bodyPayload.username = String((opsi && opsi.username) || bacaUsernameSesi());
+      }
 
       for (let percobaan = 1; percobaan <= RETRY_MAKS_AKSI; percobaan++) {
         try {
@@ -2537,7 +2568,7 @@
       if (kegagalanTerakhir && AKSI_BACA_LEWAT_GET[action]) {
         try {
           console.warn('[POS API] fallback ke GET untuk', action);
-          const argsUntukUrl = (action === 'getInitialData') ? [60] : args;
+          const argsUntukUrl = (action === 'getInitialData') ? [argsKirim[0], argsKirim[1]] : args;
           const urlGet = endpoint + '?action=' + encodeURIComponent(action) + '&args=' + encodeURIComponent(JSON.stringify(Array.isArray(argsUntukUrl) ? argsUntukUrl : [argsUntukUrl])) + (koneksiId ? '&koneksiId=' + encodeURIComponent(koneksiId) : '') + '&_cb=' + Date.now();
           const response = await fetchDenganTimeout(urlGet, { method: 'GET', headers: { 'Accept': 'application/json' }, batasMs: batasWaktu });
           const text = await response.text();
@@ -2610,7 +2641,9 @@
       try {
         for (const item of antrian) {
           try {
-            const hasil = await apiRequest('prosesCheckout', [item.cart, item.metode, item.uangDibayar], item.koneksiId);
+            // Username dari ITEM antrean (bukan sesi sekarang): transaksi harus
+            // tercatat pada cabang saat tombol ditekan, walau kasir sudah pindah.
+            const hasil = await apiRequest('prosesCheckout', [item.cart, item.metode, item.uangDibayar], item.koneksiId, false, { username: item.username });
             item.status = 'success';
             item.hasil = hasil;
             console.log('[Antrian Offline] transaksi', item.transaksi, 'terkirim, struk server:', hasil && hasil.transaksi);
@@ -3095,6 +3128,9 @@
           sessionStorage.setItem('pos_session_expiry', new Date().getTime() + durasiSesi);
           sessionStorage.setItem('pos_username', res.username);
           sessionStorage.setItem('pos_role', res.role);
+          // Cabang ikut disimpan: dipakai untuk menyaring data awal & sebagai
+          // konteks tampilan. Backend lama tidak mengirim field ini -> ''.
+          sessionStorage.setItem('pos_cabang', res.cabang || '');
 
           updateUserBadge(res.username, res.role);
           // Sisa filter dari kunjungan sebelumnya (filterSearch / rentang tanggal)
@@ -3619,7 +3655,7 @@
     // payload kecil = data awal tampil jauh lebih cepat (dulu 490+ baris penuh).
     document.addEventListener('DOMContentLoaded', function () {
       initProductViewMode();
-      safeGoogleRun('getInitialData', [60], result => {
+      safeGoogleRun('getInitialData', [60, bacaCabangSesi()], result => {
         simpanDanRenderData(result);
       }, err => {
         console.error("Gagal memuat data awal dari server:", err);
@@ -3660,7 +3696,7 @@
     // (mis. cold start Apps Script di jaringan mobile).
     let muatDataRetry = 0;
     function muatDataAwalSetelahLogin() {
-      safeGoogleRun('getInitialData', [], result => {
+      safeGoogleRun('getInitialData', [60, bacaCabangSesi()], result => {
         muatDataRetry = 0;
         // Validasi tipe sama seperti simpanDanRenderData, tapi render PAKSA.
         const safeResult = {
@@ -3689,7 +3725,7 @@
       if (isRefreshingData) return; // cegah request menumpuk
       isRefreshingData = true;
       console.log('[POS] PRODUCT REFRESH START (trueSync=' + !!trueSync + ')');
-      safeGoogleRun('getInitialData', [60], result => {
+      safeGoogleRun('getInitialData', [60, bacaCabangSesi()], result => {
         isRefreshingData = false;
         simpanDanRenderData(result);
       }, err => {
@@ -3755,7 +3791,9 @@
         return alert('Gagal: Jumlah stok tambahan harus berupa angka positif!');
       }
 
-      safeGoogleRun('tambahStokProduk', [id, qty, role], msg => {
+      // Cabang dikirim agar stok cabang ikut naik; tanpa itu backend hanya
+      // memperbarui Produk.Stok (fail-open, ada catatan di pesan balik).
+      safeGoogleRun('tambahStokProduk', [id, qty, role, bacaCabangSesi()], msg => {
         alert(msg);
         // PENTING: backend tambahStokProduk membalas STRING — teks berawalan
         // "Berhasil..." untuk sukses, atau penolakan seperti "ID Produk tidak
@@ -4223,6 +4261,7 @@
               cart: cart.slice(),
               metode: metode,
               uangDibayar: uangDibayar,
+              username: bacaUsernameSesi(), // identitas saat tombol ditekan; dipakai saat kirim ulang
               waktu: new Date().toISOString(),
               percobaan: 0,
               status: 'pending'

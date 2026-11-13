@@ -537,4 +537,45 @@ r.suite('Antrian Offline — gagal jaringan permanen tersimpan (P9)', () => {
   });
 });
 
+// ════════════════════════════════════════════════════════════════
+// IDENTITAS DI ANTRIAN (Fase 4 multi-cabang)
+//
+// Transaksi offline harus tercatat pada cabang SAAT TOMBOL DITEKAN.
+// Karena itu username disimpan di item antrean, bukan dibaca dari sesi
+// ketika kirim ulang (kasir bisa sudah berganti).
+// ════════════════════════════════════════════════════════════════
+
+r.suite('Antrian Offline — identitas saat transaksi ditekan', () => {
+
+  r.test('item antrean menyimpan username saat checkout gagal jaringan', async () => {
+    const { dom, app } = muatSkenario(999);
+    dom.sessionStorage.setItem('pos_username', 'kasir');
+
+    await tekanCheckoutGagalJaringan(app, dom, CART_SEMANGCI_2);
+
+    const antrian = JSON.parse(dom.localStorage.getItem('pos_offline_queue') || '[]');
+    r.assertEq(antrian.length, 1, 'satu item antrean');
+    r.assertEq(antrian[0].username, 'kasir', 'username tersimpan di item');
+  });
+
+  r.test('kirim ulang memakai username item, bukan sesi sekarang', async () => {
+    const { dom, app, panggilan } = muatSkenario(999);
+    dom.sessionStorage.setItem('pos_username', 'kasir-lama');
+    await tekanCheckoutGagalJaringan(app, dom, CART_SEMANGCI_2);
+
+    // Kasir berganti shift sebelum antrean sempat terkirim.
+    dom.sessionStorage.setItem('pos_username', 'kasir-baru');
+    muatSkenarioUlangFetch(app, panggilan, 0); // koneksi pulih
+    await app.call('kirimAntrianOffline');
+    await flush();
+
+    const checkout = panggilan
+      .map(p => { try { return JSON.parse(p.body || '{}'); } catch (e) { return {}; } })
+      .filter(b => b.action === 'prosesCheckout');
+    r.assertOk(checkout.length > 0, 'ada percobaan checkout dari antrean');
+    r.assertEq(checkout[checkout.length - 1].username, 'kasir-lama', 'memakai identitas saat transaksi terjadi');
+  });
+
+});
+
 r.run('Antrian Transaksi Offline').then(ok => { process.exit(ok ? 0 : 1); });

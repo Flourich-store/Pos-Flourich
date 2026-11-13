@@ -314,6 +314,122 @@ r.suite('Frontend — apiRequest retry & fallback GET', () => {
 
 });
 
+// ════════════════════════════════════════════════════════════════
+// CABANG SESI DI LAPIS JARINGAN (Fase 4)
+//
+// Frontend mengirim cabang hanya sebagai konteks BACA (getInitialData),
+// dan mengirim username untuk checkout. Cabang transaksi TIDAK pernah dikirim
+// dari klien — backend membacanya dari sheet User.
+// ════════════════════════════════════════════════════════════════
+
+r.suite('Frontend — cabang sesi di apiRequest', () => {
+
+  function balasanOk() {
+    return Promise.resolve({
+      ok: true,
+      status: 200,
+      text: () => Promise.resolve(JSON.stringify({ produk: [], penjualan: [], timestamp: 1 }))
+    });
+  }
+
+  r.test('getInitialData mengirim cabang sesi sebagai argumen kedua', async () => {
+    let body = null;
+    const { dom, app } = loadJaringanSkenario(function (url, opts) {
+      if (opts && opts.body) body = JSON.parse(opts.body);
+      return balasanOk();
+    });
+    dom.sessionStorage.setItem('pos_cabang', 'CABANG-2');
+
+    await app.call('apiRequest', 'getInitialData', [60], null, true);
+
+    r.assertOk(body, 'body terkirim');
+    r.assertEq(body.args[0], 60, 'limit tetap dikirim');
+    r.assertEq(body.args[1], 'CABANG-2', 'cabang sesi ikut dikirim');
+  });
+
+  r.test('sesi lama tanpa cabang -> argumen kedua kosong (semua data tetap tampil)', async () => {
+    let body = null;
+    const { app } = loadJaringanSkenario(function (url, opts) {
+      if (opts && opts.body) body = JSON.parse(opts.body);
+      return balasanOk();
+    });
+
+    await app.call('apiRequest', 'getInitialData', [60], null, true);
+
+    r.assertEq(body.args[1], '', 'tanpa cabang = string kosong, bukan undefined');
+  });
+
+  r.test('prosesCheckout mengirim username, TIDAK mengirim cabang', async () => {
+    let body = null;
+    const { dom, app } = loadJaringanSkenario(function (url, opts) {
+      if (opts && opts.body) body = JSON.parse(opts.body);
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        text: () => Promise.resolve(JSON.stringify({ status: 'success', transaksi: 'FR-1' }))
+      });
+    });
+    dom.sessionStorage.setItem('pos_username', 'kasir');
+    dom.sessionStorage.setItem('pos_cabang', 'CABANG-2');
+
+    await app.call('apiRequest', 'prosesCheckout', [[{ id: '1', nama: 'Semangci', jumlah: 1, total: 15000 }], 'CASH', 20000]);
+
+    r.assertEq(body.username, 'kasir', 'username dikirim untuk penentuan cabang di server');
+    r.assertEq(body.cabang, undefined, 'klien tidak mengirim cabang transaksi');
+    r.assertEq(body.args.length, 3, 'args checkout tidak berubah');
+  });
+
+  r.test('opsi.username (kirim ulang antrean) menang atas sesi sekarang', async () => {
+    let body = null;
+    const { dom, app } = loadJaringanSkenario(function (url, opts) {
+      if (opts && opts.body) body = JSON.parse(opts.body);
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        text: () => Promise.resolve(JSON.stringify({ status: 'success', transaksi: 'FR-2' }))
+      });
+    });
+    dom.sessionStorage.setItem('pos_username', 'kasir-baru');
+
+    await app.call('apiRequest', 'prosesCheckout', [[{ id: '1', nama: 'Semangci', jumlah: 1, total: 15000 }], 'CASH', 20000],
+      'kx-1', false, { username: 'kasir-lama' });
+
+    r.assertEq(body.username, 'kasir-lama', 'identitas saat transaksi terjadi, bukan saat kirim ulang');
+  });
+
+  r.test('fallback GET getInitialData juga memuat cabang', async () => {
+    const { dom, app, panggilan } = loadJaringanSkenario(function (url, opts) {
+      if ((opts && opts.method) === 'POST') {
+        return Promise.resolve({ ok: false, status: 404, text: () => Promise.resolve('') });
+      }
+      return balasanOk();
+    });
+    dom.sessionStorage.setItem('pos_cabang', 'CABANG-2');
+
+    await app.call('apiRequest', 'getInitialData', [60], null, true);
+
+    const get = panggilan.filter(p => p.method === 'GET').pop();
+    r.assertOk(get, 'fallback GET dipakai');
+    r.assertOk(decodeURIComponent(get.url).indexOf('CABANG-2') !== -1, 'cabang ikut di URL GET');
+  });
+
+  r.test('cache pendek dipisah per cabang (3 detik)', async () => {
+    let jumlahRequest = 0;
+    const { dom, app } = loadJaringanSkenario(function () {
+      jumlahRequest++;
+      return balasanOk();
+    });
+
+    dom.sessionStorage.setItem('pos_cabang', 'CABANG-A');
+    await app.call('apiRequest', 'getInitialData', [60]);
+    dom.sessionStorage.setItem('pos_cabang', 'CABANG-B');
+    await app.call('apiRequest', 'getInitialData', [60]);
+
+    r.assertEq(jumlahRequest, 2, 'cabang berbeda tidak memakai cache yang sama');
+  });
+
+});
+
 r.run('frontend_jaringan.test.js').then(ok => {
   process.exit(ok ? 0 : 1);
 });
