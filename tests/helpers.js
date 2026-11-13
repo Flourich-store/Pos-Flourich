@@ -304,7 +304,7 @@ function loadBackend(gas) {
   // context supaya test memakai definisi skema yang sama dengan runtime.
   const KONST = {};
   [
-    'PETA_KOLOM_PENJUALAN', 'PETA_KOLOM_PRODUK', 'ALIAS_PRODUK',
+    'PETA_KOLOM_PENJUALAN', 'PETA_KOLOM_PRODUK', 'PETA_KOLOM_USER', 'ALIAS_PRODUK',
     'HEADER_PENJUALAN_PAYLOAD', 'HEADER_PRODUK_PAYLOAD',
     'AKSI_TULIS', 'RETRY_MAKS', 'QUEUE_MAKS'
   ].forEach(nama => {
@@ -335,6 +335,8 @@ function loadBackend(gas) {
     susunBarisKolom: sandbox.susunBarisKolom,
     petaKolomPenjualanSheet: sandbox.petaKolomPenjualanSheet,
     petaKolomProdukSheet: sandbox.petaKolomProdukSheet,
+    petaKolomUserSheet: sandbox.petaKolomUserSheet,
+    _cabangUntukCheckout: sandbox._cabangUntukCheckout,
     headerPenjualanPayload: sandbox.headerPenjualanPayload,
     headerProdukPayload: sandbox.headerProdukPayload,
     ambilKolomAngka: sandbox.ambilKolomAngka,
@@ -384,7 +386,7 @@ function loadBackendDiagnostik(gas) {
 
   const KONST = {};
   [
-    'PETA_KOLOM_PENJUALAN', 'PETA_KOLOM_PRODUK', 'ALIAS_PRODUK',
+    'PETA_KOLOM_PENJUALAN', 'PETA_KOLOM_PRODUK', 'PETA_KOLOM_USER', 'ALIAS_PRODUK',
     'HEADER_PENJUALAN_PAYLOAD', 'HEADER_PRODUK_PAYLOAD',
     'AKSI_TULIS', 'RETRY_MAKS', 'QUEUE_MAKS',
     // Staging kolom baru + keputusan HPP pemilik (Diagnostik.js).

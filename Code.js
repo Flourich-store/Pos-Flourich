@@ -140,9 +140,9 @@ function prosesCheckout(cart, metode, uangDibayar, requestData) {
   });
 }
 
-function tambahStokProduk(idProduk, qtyTambah, role) {
+function tambahStokProduk(idProduk, qtyTambah, role, cabang) {
   return denganKunciTulis(function () {
-    return tambahStokProdukInti(idProduk, qtyTambah, role);
+    return tambahStokProdukInti(idProduk, qtyTambah, role, cabang);
   });
 }
 
@@ -235,15 +235,22 @@ function checkLogin(username, password) {
 
   const data = sheet.getDataRange().getValues();
 
+  // Kolom dibaca lewat NAMA HEADER, bukan posisi 0/1/2. Sheet User ikut
+  // mendapat kolom "Cabang" dari migrasi multi-cabang, dan urutan kolom bisa
+  // berbeda antar spreadsheet; indeks tetap adalah pola yang sudah pernah
+  // salah (lihat PETA_KOLOM_PENJUALAN).
+  const petaUser = petaKolomUserSheet(sheet);
+
   for (let i = 1; i < data.length; i++) {
 
-    const user = String(data[i][0]).trim();
-    const pass = String(data[i][1]).trim();
+    const user = String(ambilKolom(data[i], petaUser, 'username', data[i][0])).trim();
+    const pass = String(ambilKolom(data[i], petaUser, 'password', data[i][1])).trim();
 
     if (
       user === String(username).trim() &&
       pass === String(password).trim()
     ) {
+      const cabangUser = String(ambilKolom(data[i], petaUser, 'cabang', '') || '').trim();
       // Data awal ikut dalam respons login = 1 roundtrip (bukan 2).
       // Bila gagal (sheet bermasalah), kirim tanpa dataAwal — frontend
       // otomatis memakai jalur getInitialData terpisah.
@@ -251,14 +258,19 @@ function checkLogin(username, password) {
       try {
         // Lewat cache 60 dtk: login perangkat kedua/ketiga dalam semenit tidak
         // membaca ulang sheet Produk + Penjualan (instan, beban sheet turun).
-        dataAwal = getInitialDataBerCache(60);
+        // Cabang ikut dikirim sebagai bagian kunci cache, supaya payload yang
+        // dibuat untuk satu sesi tidak dipakai sesi cabang lain.
+        dataAwal = getInitialDataBerCache(60, cabangUser);
       } catch (dataErr) {
         Logger.log("checkLogin: gagal memuat data awal (frontend akan fallback): " + dataErr);
       }
       return {
         status: true,
         username: user,
-        role: data[i][2] || "KASIR",
+        role: ambilKolom(data[i], petaUser, 'role', data[i][2]) || "KASIR",
+        // Cabang user (kosong bila sheet belum termigrasi). Frontend memakainya
+        // sebagai cabang sesi; checkout tidak pernah percaya nilai dari klien.
+        cabang: cabangUser,
         dataAwal: dataAwal
       };
     }
@@ -454,7 +466,7 @@ function getProdukData() {
 /**
  * Tambah Stok
  */
-function tambahStokProdukInti(idProduk, qtyTambah, role) {
+function tambahStokProdukInti(idProduk, qtyTambah, role, cabang) {
 
   // Enforce permission on server side
   if (role !== 'SUPER_ADMIN' && role !== 'KASIR') {
@@ -498,13 +510,31 @@ function tambahStokProdukInti(idProduk, qtyTambah, role) {
 
       sheet.getRange(i + 1, peta.col.stok + 1).setValue(stok);
 
+      // Stok per cabang: tambahkan ke kolom cabang pemanggil bila dikirim.
+      // Fail-open: tanpa cabang / sheet atau kolom belum ada -> Produk.Stok
+      // saja, dengan catatan di pesan balik supaya tidak terlihat seperti sukses
+      // penuh padahal stok cabang belum ikut naik.
+      let catatanCabang = '';
+      if (String(cabang || '').trim()) {
+        const tambahPerId = new Map();
+        tambahPerId.set(String(idProduk).trim(), qtyTambah);
+        const hasilCabang = _ubahStokCabang(ss, cabang, tambahPerId);
+        if (!hasilCabang.ok) {
+          catatanCabang = ' Stok cabang "' + String(cabang).trim() + '" belum ikut naik: ' + hasilCabang.alasan + '.';
+          Logger.log('tambahStokProduk: ' + catatanCabang);
+        } else if (hasilCabang.dilewati.length) {
+          catatanCabang = ' Sebagian stok cabang dilewati: ' + hasilCabang.dilewati.join('; ') + '.';
+          Logger.log('tambahStokProduk: ' + catatanCabang);
+        }
+      }
+
       // Cache payload baca tidak lagi valid (stok berubah di sheet).
       buangCacheAwal();
 
       return "Berhasil menambah stok " +
         ambilKolom(data[i], peta, 'nama', '') +
         " sebanyak " +
-        qtyTambah;
+        qtyTambah + catatanCabang;
 
     }
 
@@ -569,7 +599,8 @@ function getPenjualanData() {
       ambilKolomAngka(row, peta, 'uangKembali', 0),                               // Uang Kembali
       ambilKolomAngkaAtauKosong(row, peta, 'modal'),                              // Modal (kosong = tidak dihitung)
       ambilKolomAngkaAtauKosong(row, peta, 'biayaOperasional'),                   // Biaya Operasional
-      ambilKolomAngkaAtauKosong(row, peta, 'labaBersih')                          // Laba Bersih
+      ambilKolomAngkaAtauKosong(row, peta, 'labaBersih'),                         // Laba Bersih
+      ambilKolomTeks(row, peta, 'cabang', '')                                     // Cabang (kosong = belum berlabel)
     ]);
 
   }
@@ -602,13 +633,40 @@ function getPenjualanData() {
  * lewat saja (perilaku sama seperti sebelumnya, tanpa cache).
  */
 var KUNCI_CACHE_AWAL = 'pos_awal_v1';
+// Token versi: cache kini SATU KUNCI PER CABANG, dan CacheService tidak bisa
+// menghapus berdasarkan awalan. Menulis token baru membuat SEMUA kunci lama
+// (semua cabang) tak terjangkau sekaligus; entri lamanya mati sendiri lewat TTL.
+var KUNCI_CACHE_AWAL_VERSI = 'pos_awal_versi';
 var TTL_CACHE_AWAL = 60; // detik
 
-function bacaCacheAwal() {
+/** Token versi aktif. Cache tidak tersedia / token hilang -> '0'. */
+function _tokenCacheAwal() {
+  try {
+    const cache = CacheService.getScriptCache();
+    if (cache && typeof cache.get === 'function') {
+      const v = cache.get(KUNCI_CACHE_AWAL_VERSI);
+      if (v) return String(v);
+    }
+  } catch (e) { }
+  return '0';
+}
+
+/**
+ * Kunci cache untuk satu cabang.
+ *
+ * Payload getInitialData bisa berbeda per cabang, jadi kuncinya WAJIB memuat
+ * cabang — satu kunci global akan menyajikan data cabang lain kepada kasir
+ * cabang ini. Cabang kosong memakai kunci tersendiri (''), bukan kunci umum.
+ */
+function _kunciCacheAwal(cabang) {
+  return KUNCI_CACHE_AWAL + '|' + _tokenCacheAwal() + '|' + _normHeader(cabang || '');
+}
+
+function bacaCacheAwal(cabang) {
   try {
     const cache = CacheService.getScriptCache();
     if (!cache || typeof cache.get !== 'function') return null;
-    const raw = cache.get(KUNCI_CACHE_AWAL);
+    const raw = cache.get(_kunciCacheAwal(cabang));
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     return (parsed && Array.isArray(parsed.produk) && Array.isArray(parsed.penjualan)) ? parsed : null;
@@ -617,11 +675,11 @@ function bacaCacheAwal() {
   }
 }
 
-function simpanCacheAwal(payload) {
+function simpanCacheAwal(payload, cabang) {
   try {
     const cache = CacheService.getScriptCache();
     if (!cache || typeof cache.put !== 'function') return;
-    cache.put(KUNCI_CACHE_AWAL, JSON.stringify(payload), TTL_CACHE_AWAL);
+    cache.put(_kunciCacheAwal(cabang), JSON.stringify(payload), TTL_CACHE_AWAL);
   } catch (e) {
     // Payload > 100KB atau cache tidak tersedia → lewati, jangan gagalkan request
   }
@@ -630,7 +688,15 @@ function simpanCacheAwal(payload) {
 function buangCacheAwal() {
   try {
     const cache = CacheService.getScriptCache();
-    if (cache && typeof cache.remove === 'function') cache.remove(KUNCI_CACHE_AWAL);
+    if (!cache) return;
+    // Naikkan token versi: semua kunci per cabang (dan kunci lama era satu-
+    // kunci) langsung tidak dipakai lagi.
+    if (typeof cache.put === 'function') {
+      cache.put(KUNCI_CACHE_AWAL_VERSI,
+        String(new Date().getTime()) + '-' + Math.random().toString(36).slice(2),
+        TTL_CACHE_AWAL);
+    }
+    if (typeof cache.remove === 'function') cache.remove(KUNCI_CACHE_AWAL);
   } catch (e) { }
 }
 
@@ -639,17 +705,17 @@ function buangCacheAwal() {
  * HASIL IDENTIK dengan getInitialData biasa — hanya lebih cepat untuk
  * panggilan berulang dalam semenit.
  */
-function getInitialDataBerCache(limitPenjualan) {
-  const hit = bacaCacheAwal();
+function getInitialDataBerCache(limitPenjualan, cabang) {
+  const hit = bacaCacheAwal(cabang);
   if (hit) return hit;
-  const hasil = getInitialData(limitPenjualan);
+  const hasil = getInitialData(limitPenjualan, cabang);
   if (hasil && Array.isArray(hasil.produk) && Array.isArray(hasil.penjualan)) {
-    simpanCacheAwal(hasil);
+    simpanCacheAwal(hasil, cabang);
   }
   return hasil;
 }
 
-function getInitialData(limitPenjualan) {
+function getInitialData(limitPenjualan, cabang) {
   const ss = getSpreadsheet();
   const timezone = ss.getSpreadsheetTimeZone();
 
@@ -773,9 +839,18 @@ function getInitialData(limitPenjualan) {
 
       penjualanResult = [penjualanHeader];
 
+      // Filter cabang: PUSAT (dan pemanggil tanpa konteks) melihat semua baris,
+      // cabang lain hanya baris miliknya. Penyaringan dilakukan SEBELUM baris
+      // disusun, jadi payload yang di-cache sudah benar per cabang.
+      const lihatSemua = _cabangMelihatSemua(cabang);
+      const cabangDiminta = _normHeader(cabang);
+
       for (let i = 1; i < dataJual.length; i++) {
         const row = dataJual[i];
         if (row[0] == "" || row[1] == "") continue;
+
+        const cabangBaris = String(ambilKolomTeks(row, peta, 'cabang', '')).trim();
+        if (!lihatSemua && _normHeader(cabangBaris) !== cabangDiminta) continue;
 
         penjualanResult.push([
           String(ambilKolom(row, peta, 'id', '')),
@@ -790,7 +865,10 @@ function getInitialData(limitPenjualan) {
           ambilKolomAngka(row, peta, 'uangKembali', 0),
           ambilKolomAngkaAtauKosong(row, peta, 'modal'),
           ambilKolomAngkaAtauKosong(row, peta, 'biayaOperasional'),
-          ambilKolomAngkaAtauKosong(row, peta, 'labaBersih')
+          ambilKolomAngkaAtauKosong(row, peta, 'labaBersih'),
+          // Cabang baris. Kosong = baris ditulis sebelum Fase 1 dipasang /
+          // sebelum migrasi; JANGAN dianggap PUSAT.
+          cabangBaris
         ]);
       }
     }
@@ -800,6 +878,9 @@ function getInitialData(limitPenjualan) {
   return {
     produk: produkResult,
     penjualan: penjualanResult,
+    // Cabang yang dipakai menyaring payload ini. '' = tanpa filter (semua
+    // baris), 'PUSAT' = semua baris juga, cabang lain = hanya barisnya sendiri.
+    cabang: String(cabang || '').trim(),
     timestamp: new Date().getTime()
   };
 }
@@ -969,7 +1050,12 @@ function prosesCheckoutInti(cart, metode, uangDibayar, requestData) {
       const petaJual = petaKolomPenjualanSheet(shPenjualan);
       catatPetaPeringatan('prosesCheckout', petaJual);
 
+      // "cabang" SENGAJA TIDAK ada di daftar wajib: sebelum migrasi kolom itu
+      // belum ada, dan checkout tidak boleh berhenti karenanya.
       const kolomPenting = ['id', 'tanggal', 'namaProduk', 'jumlah', 'totalHarga', 'labaBersih'];
+
+      // Cabang transaksi = cabang milik user di sheet User (bukan kiriman klien).
+      const cabangTransaksi = _cabangUntukCheckout(ss.getSheetByName("User"), requestData);
       const hilangPenting = kolomPenting.filter(f => petaJual.col[f] === undefined);
       if (hilangPenting.length) {
         return {
@@ -1060,7 +1146,11 @@ function prosesCheckoutInti(cart, metode, uangDibayar, requestData) {
         uangKembali: uangKembali,
         modal: semuaHppTerbaca ? totalModalNum : '',
         biayaOperasional: biayaOperasional,
-        labaBersih: labaBersih
+        labaBersih: labaBersih,
+        // Fail-open: bila header sheet Penjualan belum punya "Cabang", field
+        // ini DILEWATI oleh susunBarisKolom (tercatat di __tanpaKolom) dan
+        // transaksi tetap tercatat seperti biasa.
+        cabang: cabangTransaksi
       }, petaJual)];
 
       const kolomTanpaHeader = barisPenjualan[0].__tanpaKolom || [];
@@ -1111,6 +1201,22 @@ function prosesCheckoutInti(cart, metode, uangDibayar, requestData) {
             k = m + 1;
           }
         }
+      }
+
+      // Stok per cabang: kurangi kolom cabang transaksi. Produk.Stok di atas
+      // tetap ditulis sebagai stok TOTAL. Fail-open: sheet/kolom belum ada ->
+      // hanya log, transaksi tetap sukses (lihat aturan F-1..F-6).
+      const penguranganPerId = new Map();
+      for (const item of validatedItems) {
+        penguranganPerId.set(item.id, (penguranganPerId.get(item.id) || 0) + item.jumlah);
+      }
+      const negatifPerId = new Map();
+      penguranganPerId.forEach((qty, id) => negatifPerId.set(id, -qty));
+      const stokCabang = _ubahStokCabang(ss, cabangTransaksi, negatifPerId);
+      if (!stokCabang.ok) {
+        Logger.log('prosesCheckout: stok cabang tidak diperbarui (' + stokCabang.alasan + ') — transaksi tetap tercatat.');
+      } else if (stokCabang.dilewati.length) {
+        Logger.log('prosesCheckout: sebagian stok cabang dilewati: ' + stokCabang.dilewati.join('; '));
       }
 
       // Cache payload baca dipakai ulang oleh login/refresh — tulis apa pun yang
@@ -1799,8 +1905,16 @@ const PETA_KOLOM_PENJUALAN = {
   uangKembali: ['Uang Kembali', 'uangKembali'],
   modal: ['Modal', 'modal'],
   biayaOperasional: ['Biaya Operasional', 'biayaOperasional', 'BO'],
-  labaBersih: ['Laba bersih', 'Laba Bersih', 'labaBersih', 'Laba']
+  labaBersih: ['Laba bersih', 'Laba Bersih', 'labaBersih', 'Laba'],
+  // Ditambahkan migrasi multi-cabang di kolom paling KANAN. Peta ini dibaca
+  // dari header NYATA, jadi kode tetap jalan baik kolomnya sudah ada maupun
+  // belum (lihat susunBarisKolom: field tanpa kolom dilewati, bukan digeser).
+  cabang: ['Cabang', 'cabang', 'Kode Cabang']
 };
+
+// Urutan field peta di atas adalah urutan kolom inti A..M; "cabang" selalu
+// DITAMBAHKAN di akhir payload agar pembaca lama yang memakai indeks 0..12
+// tidak bergeser (index.html memakai row[0..12] untuk tabel & filter).
 
 /** Definisi kanonik kolom sheet Produk + alias header yang diterima. */
 const PETA_KOLOM_PRODUK = {
@@ -1812,6 +1926,21 @@ const PETA_KOLOM_PRODUK = {
   hpp: ['HPP', 'hpp', 'HPP Satuan'],
   volume_ml: ['volume_ml', 'Volume (ml)', 'Volume', 'volume']
 };
+
+/** Definisi kanonik kolom sheet User + alias header yang diterima. */
+const PETA_KOLOM_USER = {
+  username: ['username', 'user', 'nama user', 'Nama User', 'Username'],
+  password: ['password', 'pass', 'Password'],
+  role: ['role', 'peran', 'Role', 'Peran'],
+  // Diisi migrasi multi-cabang (PUSAT untuk semua user lama).
+  cabang: ['Cabang', 'cabang', 'Kode Cabang']
+};
+
+/** Cabang bawaan bila cabang tidak terbaca / sheet belum termigrasi. */
+const CABANG_AWAL_DEFAULT = 'PUSAT';
+
+/** Sheet stok per cabang: "ID Produk | PUSAT | <cabang lain...>". */
+const NAMA_SHEET_STOK_CABANG = 'Stok_Cabang';
 
 /** Normalisasi nama header: lowercase + spasi:raporation tunggal. */
 function _normHeader(h) {
@@ -1994,6 +2123,189 @@ function petaKolomPenjualanSheet(sh) {
  * ditemukan", sehingga pemanggil memberi pesan error yang jelas alih-alih
  * melempar error mentah ke kasir.
  */
+function petaKolomUserSheet(sh) {
+  if (!sh) return buatPetaKolom([], PETA_KOLOM_USER);
+  try {
+    const maxCols = Math.max(sh.getMaxColumns ? sh.getMaxColumns() : 0, 4);
+    const header = sh.getRange(1, 1, 1, maxCols).getValues()[0] || [];
+    return buatPetaKolom(header, PETA_KOLOM_USER);
+  } catch (e) {
+    Logger.log('petaKolomUserSheet: gagal baca header sheet User (' + e + ') — peta kosong dipakai.');
+    return buatPetaKolom([], PETA_KOLOM_USER);
+  }
+}
+
+/**
+ * Cabang untuk satu transaksi checkout.
+ *
+ * FAIL-OPEN: sheet User tidak ada, kolom Cabang belum ada (sheet belum
+ * termigrasi), atau username tidak dikenal -> PUSAT. Checkout TIDAK boleh
+ * gagal hanya karena cabang tak terbaca.
+ *
+ * Cabang TIDAK diambil dari requestData.cabang (klien bisa mengirim nilai apa
+ * pun). Yang dipakai hanya cabang milik username yang benar-benar ada di sheet
+ * User. Bila klien belum mengirim username, hasilnya PUSAT — sama dengan isi
+ * kolom Cabang untuk seluruh data lama hasil migrasi.
+ */
+function _cabangUntukCheckout(shUser, requestData) {
+  const namaUser = String(
+    (requestData && (requestData.username || requestData.user)) || ''
+  ).trim();
+  if (!shUser || !namaUser) return CABANG_AWAL_DEFAULT;
+
+  try {
+    const peta = petaKolomUserSheet(shUser);
+    // Kolom Cabang belum ada: jangan baca data User sama sekali.
+    if (peta.col.cabang === undefined) return CABANG_AWAL_DEFAULT;
+
+    const data = shUser.getDataRange().getValues();
+    const target = _normHeader(namaUser);
+    for (let i = 1; i < data.length; i++) {
+      const user = _normHeader(ambilKolom(data[i], peta, 'username', ''));
+      if (!user || user !== target) continue;
+      const cabang = String(ambilKolom(data[i], peta, 'cabang', '') || '').trim();
+      return cabang || CABANG_AWAL_DEFAULT;
+    }
+    Logger.log('_cabangUntukCheckout: username "' + namaUser + '" tidak ada di sheet User — cabang jatuh ke ' + CABANG_AWAL_DEFAULT + '.');
+  } catch (e) {
+    Logger.log('_cabangUntukCheckout: gagal membaca sheet User (' + e + ') — cabang jatuh ke ' + CABANG_AWAL_DEFAULT + '.');
+  }
+  return CABANG_AWAL_DEFAULT;
+}
+
+/**
+ * Apakah konteks cabang ini melihat SEMUA baris penjualan.
+ *
+ * ATURAN:
+ *  - ''        (tanpa konteks cabang) -> semua baris. Pemanggil lama (frontend
+ *                yang belum mengirim cabang) tidak boleh kehilangan data.
+ *  - 'PUSAT'   -> semua baris: pusat melihat seluruh cabang.
+ *  - lainnya   -> hanya baris milik cabang itu.
+ *
+ * Baris TANPA cabang tidak pernah dianggap PUSAT. Ia terlihat oleh PUSAT
+ * karena PUSAT melihat semua baris, bukan karena dilabeli PUSAT; kasir cabang
+ * lain tidak melihatnya sama sekali (baris itu memang belum diketahui cabangnya).
+ */
+function _cabangMelihatSemua(cabang) {
+  const c = _normHeader(cabang || '');
+  return c === '' || c === _normHeader(CABANG_AWAL_DEFAULT);
+}
+
+// ════════════════════════════════════════════════════════════════
+// STOK PER CABANG (sheet "Stok_Cabang")
+//
+// Bentuk sheet: satu kolom per cabang, header = NAMA CABANG.
+//     ID Produk | PUSAT | CABANG-2 | ...
+//
+// ATURAN FALLBACK (eksplisit, tidak diam-diam):
+//  F-1  Tanpa konteks cabang ('')            -> hanya Produk.Stok yang berubah.
+//  F-2  Sheet Stok_Cabang belum ada          -> hanya Produk.Stok (fail-open).
+//  F-3  Kolom cabang itu belum ada           -> hanya Produk.Stok (fail-open).
+//  F-4  Produk tidak punya baris di sheet    -> baris itu dilewati, TIDAK
+//        dikarang 0/-qty; Produk.Stok tetap berubah.
+//  F-5  Sel stok cabang KOSONG               -> dilewati (tidak ditulis).
+//        Kosong berarti "belum diisi", bukan 0: menulis -qty di sana akan
+//        menciptakan angka negatif yang tidak pernah ada dasarnya.
+//  F-6  Sel berisi angka (termasuk 0)        -> diubah, boleh jadi negatif
+//        (stok kurang tetap informatif, sama seperti Produk.Stok).
+// Semua F-1..F-5 hanya MENULIS LOG; checkout & tambah stok tidak pernah gagal
+// karena stok cabang belum siap. Produk.Stok tetap dianggap stok total.
+// ════════════════════════════════════════════════════════════════
+
+/** Peta header sheet Stok_Cabang: kolom ID produk + kolom tiap cabang. */
+function _petaStokCabang(sh) {
+  const out = { adaSheet: false, header: [], idxId: -1, kolomCabang: {} };
+  if (!sh) return out;
+  out.adaSheet = true;
+  try {
+    const maxCols = Math.max(sh.getMaxColumns ? sh.getMaxColumns() : 0, 2);
+    const header = sh.getRange(1, 1, 1, maxCols).getValues()[0] || [];
+    out.header = header;
+    const norm = header.map(_normHeader);
+    for (const alias of ['id produk', 'id']) {
+      const i = norm.indexOf(alias);
+      if (i !== -1) { out.idxId = i; break; }
+    }
+    norm.forEach((h, i) => {
+      if (!h || i === out.idxId) return;
+      if (out.kolomCabang[h] === undefined) out.kolomCabang[h] = i;
+    });
+  } catch (e) {
+    Logger.log('_petaStokCabang: gagal membaca header (' + e + ') — stok cabang dianggap tidak tersedia.');
+    out.adaSheet = false;
+  }
+  return out;
+}
+
+/**
+ * Ubah stok cabang untuk sekumpulan produk.
+ * @param {Object} ss spreadsheet
+ * @param {string} cabang nama cabang (header kolom)
+ * @param {Map<string, number>} deltaPerId id produk -> perubahan (+tambah, -jual)
+ * @return {{ok: boolean, alasan: string, ditulis: number, dilewati: Array}}
+ */
+function _ubahStokCabang(ss, cabang, deltaPerId) {
+  const hasil = { ok: false, alasan: '', ditulis: 0, dilewati: [] };
+
+  const namaCabang = _normHeader(cabang || '');
+  if (!namaCabang) { hasil.alasan = 'tanpa konteks cabang'; return hasil; }
+
+  let sh = null;
+  try { sh = ss.getSheetByName(NAMA_SHEET_STOK_CABANG); } catch (e) { sh = null; }
+  if (!sh) { hasil.alasan = 'sheet ' + NAMA_SHEET_STOK_CABANG + ' belum ada'; return hasil; }
+
+  const peta = _petaStokCabang(sh);
+  if (peta.idxId < 0) { hasil.alasan = 'kolom "ID Produk" tidak ada di ' + NAMA_SHEET_STOK_CABANG; return hasil; }
+  const idxKolom = peta.kolomCabang[namaCabang];
+  if (idxKolom === undefined) { hasil.alasan = 'kolom cabang "' + String(cabang).trim() + '" belum ada di ' + NAMA_SHEET_STOK_CABANG; return hasil; }
+
+  const jumlah = deltaPerId instanceof Map ? deltaPerId.size : 0;
+  if (!jumlah) { hasil.ok = true; return hasil; }
+
+  const lastRow = sh.getLastRow();
+  if (lastRow < 2) { hasil.alasan = NAMA_SHEET_STOK_CABANG + ' belum berisi data'; return hasil; }
+
+  const maxCols = Math.max(sh.getMaxColumns(), peta.idxId + 1, idxKolom + 1);
+  const data = sh.getRange(2, 1, lastRow - 1, maxCols).getValues();
+
+  const petaBaris = new Map();
+  for (let i = 0; i < data.length; i++) {
+    const id = _normHeader(data[i][peta.idxId]);
+    if (!id) continue;
+    if (!petaBaris.has(id)) petaBaris.set(id, i + 2); // nomor baris sheet (1-based)
+  }
+
+  const tulis = [];
+  deltaPerId.forEach((delta, id) => {
+    const kunci = _normHeader(id);
+    const baris = petaBaris.get(kunci);
+    if (baris === undefined) { hasil.dilewati.push(kunci + ': tidak ada di ' + NAMA_SHEET_STOK_CABANG); return; }
+    const mentah = data[baris - 2][idxKolom];
+    if (String(mentah === null || mentah === undefined ? '' : mentah).trim() === '') {
+      hasil.dilewati.push(kunci + ': stok cabang kosong');
+      return;
+    }
+    const sekarang = parseAngkaToleran(mentah);
+    if (!Number.isFinite(sekarang)) { hasil.dilewati.push(kunci + ': stok bukan angka'); return; }
+    tulis.push({ baris: baris, nilai: sekarang + Number(delta) });
+  });
+
+  // Kelompokkan baris berurutan menjadi satu setValues (sama seperti stok Produk).
+  tulis.sort((a, b) => a.baris - b.baris);
+  let k = 0;
+  while (k < tulis.length) {
+    let m = k;
+    while (m + 1 < tulis.length && tulis[m + 1].baris === tulis[m].baris + 1) m++;
+    const bagian = tulis.slice(k, m + 1).map(t => [t.nilai]);
+    sh.getRange(tulis[k].baris, idxKolom + 1, bagian.length, 1).setValues(bagian);
+    hasil.ditulis += bagian.length;
+    k = m + 1;
+  }
+
+  hasil.ok = true;
+  return hasil;
+}
+
 function petaKolomProdukSheet(sh) {
   if (!sh) return buatPetaKolom([], PETA_KOLOM_PRODUK);
   try {
@@ -2050,7 +2362,8 @@ function selaraskanNamaProduk(namaPenjualan, daftarNamaProduk) {
 /** Header payload penjualan — satu sumber kebenaran untuk semua reader. */
 const HEADER_PENJUALAN_PAYLOAD = [
   'id', 'tanggal', 'namaProduk', 'volumeMl', 'hppSatuan', 'jumlah', 'totalHarga',
-  'metode', 'uangDibayar', 'uangKembali', 'modal', 'biayaOperasional', 'labaBersih'
+  'metode', 'uangDibayar', 'uangKembali', 'modal', 'biayaOperasional', 'labaBersih',
+  'cabang'
 ];
 function headerPenjualanPayload() {
   return HEADER_PENJUALAN_PAYLOAD.slice();

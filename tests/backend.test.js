@@ -285,7 +285,8 @@ r.suite('Regresi Skema Penjualan — reader berbasis NAMA HEADER (bukan posisi)'
     const { backend } = setupNyata();
     const out = backend.getPenjualanData();
 
-    r.assertEq(out[0].length, 13, 'payload 13 kolom');
+    r.assertEq(out[0].length, 14, 'payload 13 kolom inti + cabang');
+    r.assertEq(out[0][13], 'cabang', 'cabang di ujung payload');
     const row = out[3]; // FR-0003 Wonapel 250 ml
     r.assertEq(row[2], 'Wonapel 250 ml', 'Nama Produk');
     r.assertEq(row[3], 250, 'Volume (ml) = 250 (kolom D)');
@@ -364,8 +365,10 @@ r.suite('Regresi Skema Penjualan — reader berbasis NAMA HEADER (bukan posisi)'
     r.assertEq(isi[11], 0, 'Biaya Operasional 0 (terisi) tetap angka 0, bukan ""');
     r.assertEq(isi[12], 7500, 'Laba terisi tetap angka');
 
-    // Bentuk payload tetap 13 kolom & JSON-aman.
-    r.assertEq(out[0].length, 13, 'header tetap 13 kolom');
+    // Bentuk payload: 13 kolom inti + cabang, & JSON-aman.
+    r.assertEq(out[0].length, 14, 'header 13 kolom inti + cabang');
+    r.assertEq(out[0][13], 'cabang', 'cabang di ujung header');
+    r.assertEq(out[3][13], '', 'sheet belum termigrasi -> cabang kosong, bukan PUSAT');
     r.assertDoesNotThrow(() => JSON.parse(JSON.stringify(out)), 'payload tetap JSON-valid');
   });
 
@@ -1408,28 +1411,42 @@ r.suite('Diagnostik - rencanaBackfillKolomBaru (staging N..R, DRY-RUN)', () => {
     const sb = backend.__sandbox;
     const { rencana } = jalankan(backend);
     const petas = backend.KONST.PETA_KOLOM_PENJUALAN;
-    const fields = Object.keys(petas);
+    // 13 field inti era A..M. "cabang" ditambahkan migrasi di kolom paling
+    // kanan, jadi TIDAK dihitung inti dan tidak boleh menggeser satu pun.
+    const KOLOM_INTI = [
+      'id', 'tanggal', 'namaProduk', 'volumeMl', 'hppSatuan', 'jumlah', 'totalHarga',
+      'metode', 'uangDibayar', 'uangKembali', 'modal', 'biayaOperasional', 'labaBersih'
+    ];
+    const fields = KOLOM_INTI;
     // Pakai header ASLI dari rencana, bukan daftar hardcode: kalau
     // implementasi tidak menambah kolom R, test ini harus gagal.
     r.assertEq(rencana.headerKolomBaru.length, 5, 'rencana benar-benar punya 5 kolom staging');
     const headerLengkap = H13.concat(rencana.headerKolomBaru);
     r.assertEq(headerLengkap.length, 18, 'header sheet jadi 18 kolom (13 inti + 5 staging)');
     const peta = sb.buatPetaKolom(headerLengkap, petas);
+    // Sheet belum termigrasi: header tidak punya "Cabang" -> tidak dipetakan.
+    r.assertEq(peta.col.cabang, undefined, 'header tanpa "Cabang" -> cabang tidak dipetakan');
 
-    for (const f of fields) {
-      r.assertEq(peta.col[f], fields.indexOf(f), '"' + f + '" tetap di indeks ' + fields.indexOf(f));
+    for (const f of KOLOM_INTI) {
+      r.assertEq(peta.col[f], KOLOM_INTI.indexOf(f), '"' + f + '" tetap di indeks ' + KOLOM_INTI.indexOf(f));
     }
-    r.assertEq(Object.keys(petas).length, 13, 'peta inti tetap 13 field');
+    r.assertEq(Object.keys(petas).length, KOLOM_INTI.length + 1, '13 field inti + cabang di peta');
     r.assertEq(peta.ambigu.length, 0, '0 ambiguitas dengan 5 kolom tambahan');
 
     // Tidak boleh ada field inti yang TerISI oleh kolom staging.
     for (const f of fields) {
       r.assertOk(peta.col[f] <= 12, '"' + f + '" tidak menunjuk kolom staging (N..R)');
     }
+    // Sesudah migrasi: "Cabang" di ujung kanan, inti tetap tidak bergeser.
+    const petasesudah = sb.buatPetaKolom(headerLengkap.concat(['Cabang']), petas);
+    r.assertEq(petasesudah.col.cabang, 18, 'cabang di kolom ke-19 (ujung kanan)');
+    for (const f of KOLOM_INTI) {
+      r.assertEq(petasesudah.col[f], KOLOM_INTI.indexOf(f), '"' + f + '" tetap di indeks ' + KOLOM_INTI.indexOf(f) + ' sesudah migrasi');
+    }
     // Header lama (tanpa kolom staging) harus tetap dipetakan sama ->
     // berarti kolom baru benar-benar tidak ikut memengaruhi pembacaan.
     const petaLama = sb.buatPetaKolom(H13.slice(), petas);
-    for (const f of fields) {
+    for (const f of KOLOM_INTI) {
       r.assertEq(petaLama.col[f], peta.col[f], 'posisi "' + f + '" identik dengan & tanpa kolom staging');
     }
   });
@@ -1865,39 +1882,43 @@ r.suite('Backend — cache baca getInitialData (v89)', () => {
     const a = backend.getInitialDataBerCache(60);
     const b = backend.getInitialDataBerCache(60);
     r.assertEq(JSON.stringify(b), JSON.stringify(a), 'hasil panggilan kedua identik (dari cache)');
-    r.assertOk(cache['pos_awal_v1'], 'cache terisi setelah panggilan pertama');
+    r.assertOk(Object.keys(cache).some(k => k.indexOf('pos_awal_v1') === 0), 'cache terisi setelah panggilan pertama');
   });
 
   r.test('eksekusiAksi getInitialData memakai jalur cache', () => {
     const { backend, cache } = setup();
     const res = backend.eksekusiAksi({ action: 'getInitialData', args: [60] });
     r.assertArray(res.produk, 'payload utuh');
-    r.assertOk(cache['pos_awal_v1'], 'cache terisi via eksekusiAksi');
+    r.assertOk(Object.keys(cache).some(k => k.indexOf('pos_awal_v1') === 0), 'cache terisi via eksekusiAksi');
   });
 
   r.test('checkout MENGHAPUS cache — data stok/riwayat berikutnya selalu segar', () => {
     const { backend, cache } = setup();
     backend.eksekusiAksi({ action: 'getInitialData', args: [60] });
-    r.assertOk(cache['pos_awal_v1'], 'cache terisi dulu');
+    const kunciLama = backend.__sandbox._kunciCacheAwal('');
+    r.assertOk(cache[kunciLama] !== undefined, 'cache terisi dulu');
 
     backend.eksekusiAksi({ action: 'prosesCheckout', args: [
       [{ id: '1', nama: 'Semangci 250 ml', jumlah: 1, total: 15000 }], 'CASH', 20000
     ] });
-    r.assertOk(!cache['pos_awal_v1'], 'cache dibuang setelah checkout');
+    r.assertOk(backend.__sandbox._kunciCacheAwal('') !== kunciLama,
+      'kunci cache aktif berubah setelah checkout (token versi naik)');
   });
 
   r.test('tambahStokProduk MENGHAPUS cache', () => {
     const { backend, cache } = setup();
     backend.eksekusiAksi({ action: 'getInitialData', args: [60] });
-    r.assertOk(cache['pos_awal_v1'], 'cache terisi dulu');
+    const kunciLama = backend.__sandbox._kunciCacheAwal('');
+    r.assertOk(cache[kunciLama] !== undefined, 'cache terisi dulu');
 
     backend.eksekusiAksi({ action: 'tambahStokProduk', args: ['1', 5, 'KASIR'] });
-    r.assertOk(!cache['pos_awal_v1'], 'cache dibuang setelah tambah stok');
+    r.assertOk(backend.__sandbox._kunciCacheAwal('') !== kunciLama,
+      'kunci cache aktif berubah setelah tambah stok (token versi naik)');
   });
 
   r.test('cache korup dibuang aman — baca ulang sheet tetap benar', () => {
     const { backend, cache } = setup();
-    cache['pos_awal_v1'] = '{bukan json';
+    cache[backend.__sandbox._kunciCacheAwal('')] = '{bukan json';
     const hasil = backend.getInitialDataBerCache(60);
     r.assertArray(hasil.produk, 'fallback baca sheet tetap utuh');
   });
@@ -1924,6 +1945,561 @@ r.suite('Backend — cache baca getInitialData (v89)', () => {
     r.assertEq(res.status, 'success', 'ping sukses tanpa sheet');
     r.assertEq(res.pong, true, 'pong bernilai true');
     r.assertOk(typeof res.waktu === 'number' && res.waktu > 0, 'waktu (timestamp) terisi');
+  });
+
+});
+
+// ════════════════════════════════════════════════════════════════
+// KOLOM CABANG — FASE 1 (fail-open)
+//
+// Kolom "Cabang" ditulis migrasi multi-cabang di kolom paling KANAN sheet
+// Penjualan. Sebelum migrasi kolom itu belum ada, dan setiap test di bawah
+// yang memakai sheet 13 kolom membuktikan checkout TETAP jalan tanpa
+// menggeser satu kolom pun. Cabang diambil dari sheet User (bukan dari
+// requestData.cabang yang bisa dikirim sembarang nilai oleh klien).
+// ════════════════════════════════════════════════════════════════
+
+r.suite('Backend — kolom Cabang (Fase 1, fail-open)', () => {
+
+  const HEADER_JUAL_13 = [
+    'ID Transaksi', 'Tanggal', 'Nama Produk', 'Volume (ml)', 'HPP Satuan', 'Jumlah', 'Total Harga',
+    'Metode Pembayaran', 'Uang Dibayar', 'Uang Kembali', 'Modal', 'Biaya Operasional', 'Laba bersih'
+  ];
+
+  const USER_DENGAN_CABANG = [
+    ['username', 'password', 'role', 'Cabang'],
+    ['admin', 'password', 'SUPER_ADMIN', 'PUSAT'],
+    ['kasir', 'kasir123', 'KASIR', 'CABANG-2']
+  ];
+
+  const CART = [{ id: '1', nama: 'Semangci 250 ml', jumlah: 2, total: 30000 }];
+
+  r.test('sheet Penjualan BELUM punya kolom Cabang -> transaksi tetap jalan, 13 kolom', () => {
+    const { backend, spreadsheet } = setupBackend();
+
+    const res = backend.prosesCheckout(CART, 'CASH', 50000);
+
+    const baris = spreadsheet.__penjualan.__rows();
+    r.assertEq(res.status, 'success', 'transaksi sukses tanpa kolom Cabang');
+    r.assertEq(baris.length, 2, '1 baris penjualan baru');
+    r.assertEq(baris[1].length, 13, 'baris tetap 13 kolom (tidak digeser)');
+    r.assertEq(baris[1][5], 2, 'Jumlah tetap di kolom F');
+    r.assertEq(baris[1][6], 30000, 'Total Harga tetap di kolom G');
+    r.assertEq(baris[1][9], 20000, 'Uang Kembali tetap di kolom J');
+    r.assertEq(spreadsheet.__penjualan.__rows()[0].length, 13, 'header tidak berubah');
+  });
+
+  r.test('ada kolom Cabang -> terisi dari Cabang user yang checkout', () => {
+    const { backend, spreadsheet } = setupBackend({
+      penjualanRows: [HEADER_JUAL_13.concat(['Cabang'])],
+      userRows: USER_DENGAN_CABANG
+    });
+
+    const res = backend.prosesCheckout(CART, 'CASH', 50000, { username: 'kasir' });
+
+    const baris = spreadsheet.__penjualan.__rows()[1];
+    r.assertEq(res.status, 'success', 'transaksi sukses');
+    r.assertEq(baris[13], 'CABANG-2', 'Cabang terisi cabang user kasir');
+    r.assertEq(baris[5], 2, 'Jumlah tidak bergeser');
+    r.assertEq(baris[6], 30000, 'Total Harga tidak bergeser');
+  });
+
+  r.test('Cabang di kolom 19 (setelah backfill N..R) -> nilai mendarat di kolom 19', () => {
+    const header19 = HEADER_JUAL_13.concat([
+      'Revisi Modal', 'Revisi Laba', 'Flag', 'Sumber HPP', 'Catatan Estimasi', 'Cabang'
+    ]);
+    const { backend, spreadsheet } = setupBackend({
+      penjualanRows: [header19],
+      userRows: USER_DENGAN_CABANG
+    });
+
+    backend.prosesCheckout(CART, 'CASH', 50000, { username: 'kasir' });
+
+    const baris = spreadsheet.__penjualan.__rows()[1];
+    r.assertEq(baris.length, 19, 'baris selebar header (19 kolom)');
+    r.assertEq(baris[18], 'CABANG-2', 'Cabang di kolom S');
+    for (let i = 13; i <= 17; i++) r.assertEq(baris[i], '', 'kolom staging ' + (i + 1) + ' tetap kosong');
+  });
+
+  r.test('username tidak dikenal -> PUSAT, transaksi tetap sukses', () => {
+    const { backend, spreadsheet } = setupBackend({
+      penjualanRows: [HEADER_JUAL_13.concat(['Cabang'])],
+      userRows: USER_DENGAN_CABANG
+    });
+
+    const res = backend.prosesCheckout(CART, 'CASH', 50000, { username: 'tidak-ada' });
+
+    r.assertEq(res.status, 'success', 'transaksi tidak diblokir');
+    r.assertEq(spreadsheet.__penjualan.__rows()[1][13], 'PUSAT', 'jatuh ke cabang awal');
+  });
+
+  r.test('klien lama tanpa username / requestData -> PUSAT', () => {
+    const { backend, spreadsheet } = setupBackend({
+      penjualanRows: [HEADER_JUAL_13.concat(['Cabang'])],
+      userRows: USER_DENGAN_CABANG
+    });
+
+    backend.prosesCheckout(CART, 'QRIS', 0);
+
+    r.assertEq(spreadsheet.__penjualan.__rows()[1][13], 'PUSAT', 'tanpa identitas = PUSAT');
+  });
+
+  r.test('cabang user kosong di sheet -> PUSAT (bukan sel kosong)', () => {
+    const { backend, spreadsheet } = setupBackend({
+      penjualanRows: [HEADER_JUAL_13.concat(['Cabang'])],
+      userRows: [
+        ['username', 'password', 'role', 'Cabang'],
+        ['kasir', 'kasir123', 'KASIR', '']
+      ]
+    });
+
+    backend.prosesCheckout(CART, 'CASH', 50000, { username: 'kasir' });
+
+    r.assertEq(spreadsheet.__penjualan.__rows()[1][13], 'PUSAT', 'cabang kosong -> cabang awal');
+  });
+
+  r.test('requestData.cabang dari klien DIABAIKAN (pakai cabang di sheet User)', () => {
+    const { backend, spreadsheet } = setupBackend({
+      penjualanRows: [HEADER_JUAL_13.concat(['Cabang'])],
+      userRows: USER_DENGAN_CABANG
+    });
+
+    backend.prosesCheckout(CART, 'CASH', 50000, { username: 'kasir', cabang: 'CABANG-PALSU' });
+
+    r.assertEq(spreadsheet.__penjualan.__rows()[1][13], 'CABANG-2', 'cabang dari sheet User, bukan dari klien');
+  });
+
+  r.test('checkLogin mengembalikan cabang walau urutan kolom User berbeda', () => {
+    const { backend } = setupBackend({
+      userRows: [
+        ['Cabang', 'role', 'password', 'username'],
+        ['CABANG-9', 'KASIR', 'rahasia', 'budi']
+      ]
+    });
+
+    const res = backend.checkLogin('budi', 'rahasia');
+
+    r.assertEq(res.status, true, 'login sukses');
+    r.assertEq(res.role, 'KASIR', 'role benar lewat nama header');
+    r.assertEq(res.cabang, 'CABANG-9', 'cabang ikut dikembalikan');
+  });
+
+  r.test('checkLogin pada sheet User tanpa kolom Cabang -> cabang kosong, bukan error', () => {
+    const { backend } = setupBackend();
+
+    const res = backend.checkLogin('admin', 'password');
+
+    r.assertEq(res.status, true, 'login tetap sukses');
+    r.assertEq(res.cabang, '', 'cabang kosong sebelum migrasi');
+    r.assertEq(res.role, 'SUPER_ADMIN', 'role tetap terbaca');
+  });
+
+});
+
+// ════════════════════════════════════════════════════════════════
+// CABANG DI PAYLOAD BACA — FASE 2
+//
+// "cabang" selalu DITAMBAHKAN di akhir payload (indeks 13), karena
+// index.html memakai row[0..12] untuk tabel & filter. Payload belum difilter
+// per cabang; yang dijamin di sini adalah bentuk payload dan pemisahan cache
+// supaya payload satu cabang tidak pernah disajikan sebagai cabang lain.
+// ════════════════════════════════════════════════════════════════
+
+r.suite('Backend — cabang di payload & cache per cabang (Fase 2)', () => {
+
+  const HEADER_JUAL_13 = [
+    'ID Transaksi', 'Tanggal', 'Nama Produk', 'Volume (ml)', 'HPP Satuan', 'Jumlah', 'Total Harga',
+    'Metode Pembayaran', 'Uang Dibayar', 'Uang Kembali', 'Modal', 'Biaya Operasional', 'Laba bersih'
+  ];
+  const HEADER_JUAL_14 = HEADER_JUAL_13.concat(['Cabang']);
+
+  const barisJual = (id, cabang) => ([id, '01/11/2026 10:00', 'Semangci 250 ml', 250, 10000, 1, 15000, 'CASH', 15000, 0, 10000, 0, 5000].concat(cabang === undefined ? [] : [cabang]));
+
+  r.test('header payload penjualan berakhir dengan "cabang" (14 kolom)', () => {
+    const { backend } = setupBackend();
+    const header = backend.headerPenjualanPayload();
+    r.assertEq(header.length, 14, '13 kolom inti + cabang');
+    r.assertEq(header[13], 'cabang', 'cabang di ujung, bukan di tengah');
+    r.assertEq(header[6], 'totalHarga', 'kolom inti tidak bergeser');
+  });
+
+  r.test('getPenjualanData mengirim cabang di indeks 13', () => {
+    const { backend } = setupBackend({
+      penjualanRows: [HEADER_JUAL_14, barisJual('FR-1', 'CABANG-2')]
+    });
+
+    const hasil = backend.getPenjualanData();
+
+    r.assertEq(hasil.length, 2, 'header + 1 baris');
+    r.assertEq(hasil[0].length, 14, 'header 14 kolom');
+    r.assertEq(hasil[1].length, 14, 'baris 14 kolom');
+    r.assertEq(hasil[1][13], 'CABANG-2', 'cabang baris terkirim');
+    r.assertEq(hasil[1][6], 15000, 'Total Harga tidak bergeser');
+  });
+
+  r.test('sheet belum termigrasi -> cabang kosong, A..M tidak bergeser', () => {
+    const { backend } = setupBackend({ penjualanRows: [HEADER_JUAL_13, barisJual('FR-2')] });
+
+    const hasil = backend.getPenjualanData();
+
+    r.assertEq(hasil[1].length, 14, 'baris tetap 14 kolom (cabang kosong)');
+    r.assertEq(hasil[1][13], '', 'cabang kosong, BUKAN PUSAT');
+    r.assertEq(hasil[1][6], 15000, 'Total Harga tetap di indeks 6');
+    r.assertEq(hasil[1][0], 'FR-2', 'ID tetap di indeks 0');
+  });
+
+  r.test('getInitialData mengirim cabang pada header & baris penjualan', () => {
+    const { backend } = setupBackend({
+      penjualanRows: [HEADER_JUAL_14, barisJual('FR-3', 'CABANG-9')]
+    });
+
+    const out = backend.getInitialData(60, 'CABANG-9');
+
+    r.assertEq(out.penjualan[0][13], 'cabang', 'header payload berakhir cabang');
+    r.assertEq(out.penjualan[1][13], 'CABANG-9', 'baris membawa cabang');
+    r.assertEq(out.cabang, 'CABANG-9', 'konteks cabang ikut dikembalikan');
+  });
+
+  r.test('cache TIDAK dipakai bersama antar cabang', () => {
+    const { backend, spreadsheet } = setupBackend({
+      penjualanRows: [HEADER_JUAL_14,
+        barisJual('FR-A1', 'CABANG-A'), barisJual('FR-A2', 'CABANG-A'), barisJual('FR-P1', 'PUSAT')]
+    });
+
+    const a = backend.getInitialDataBerCache(60, 'CABANG-A');
+    r.assertEq(a.penjualan.length, 3, 'cabang A: header + 2 barisnya sendiri');
+
+    // Baris baru muncul di sheet (tanpa lewat checkout, supaya cache tidak
+    // dibuang dan test benar-benar menguji pemisahan kunci).
+    spreadsheet.__penjualan.__state.rows.push(barisJual('FR-B1', 'CABANG-B'));
+
+    const b = backend.getInitialDataBerCache(60, 'CABANG-B');
+    r.assertEq(b.penjualan.length, 2, 'cabang B membaca sheet: hanya barisnya sendiri');
+    r.assertEq(b.penjualan[1][13], 'CABANG-B', 'payload B berisi baris cabang B');
+
+    const aLagi = backend.getInitialDataBerCache(60, 'CABANG-A');
+    r.assertEq(aLagi.penjualan.length, 3, 'cabang A masih memakai cache miliknya sendiri');
+  });
+
+  r.test('cache tanpa cabang terpisah dari cache cabang mana pun', () => {
+    const { backend, spreadsheet } = setupBackend({
+      penjualanRows: [HEADER_JUAL_14,
+        barisJual('FR-A1', 'CABANG-A'), barisJual('FR-A2', 'CABANG-A'), barisJual('FR-P1', 'PUSAT')]
+    });
+
+    const tanpa = backend.getInitialDataBerCache(60);
+    r.assertEq(tanpa.penjualan.length, 4, 'tanpa konteks = semua baris');
+    spreadsheet.__penjualan.__state.rows.push(barisJual('FR-B1', 'CABANG-B'));
+    const dengan = backend.getInitialDataBerCache(60, 'CABANG-A');
+
+    r.assertEq(dengan.penjualan.length, 3, 'permintaan bercabang tidak memakai cache umum');
+  });
+
+  r.test('checkout membuang cache SEMUA cabang sekaligus', () => {
+    const { backend } = setupBackend({
+      penjualanRows: [HEADER_JUAL_14, barisJual('FR-1', 'CABANG-A')]
+    });
+
+    const sebelumPusat = backend.getInitialDataBerCache(60, 'PUSAT');
+    backend.getInitialDataBerCache(60, 'CABANG-A');
+    const kunciLama = backend.__sandbox._kunciCacheAwal('CABANG-A');
+
+    backend.eksekusiAksi({ action: 'prosesCheckout', args: [
+      [{ id: '1', nama: 'Semangci 250 ml', jumlah: 1, total: 15000 }], 'CASH', 20000
+    ] });
+
+    r.assertOk(backend.__sandbox._kunciCacheAwal('CABANG-A') !== kunciLama,
+      'kunci cache cabang A ikut tidak berlaku');
+    const sesudahPusat = backend.getInitialDataBerCache(60, 'PUSAT');
+    r.assertEq(sesudahPusat.penjualan.length, sebelumPusat.penjualan.length + 1,
+      'PUSAT membaca ulang dan melihat transaksi baru');
+  });
+
+  r.test('checkLogin memakai cache per cabang user', () => {
+    const { backend, gas } = setupBackend({
+      userRows: [
+        ['username', 'password', 'role', 'Cabang'],
+        ['kasir2', 'kasir123', 'KASIR', 'CABANG-2']
+      ]
+    });
+
+    const res = backend.checkLogin('kasir2', 'kasir123');
+
+    r.assertEq(res.status, true, 'login sukses');
+    r.assertEq(res.cabang, 'CABANG-2', 'cabang user dikembalikan');
+    r.assertEq(res.dataAwal.cabang, 'CABANG-2', 'data awal dibuat untuk cabang user');
+    const kunci = Object.keys(gas.scriptRuntime.__cacheStore).filter(k => k.indexOf('pos_awal_v1') === 0);
+    r.assertOk(kunci.some(k => k.indexOf('cabang-2') !== -1), 'kunci cache memuat cabang user');
+  });
+
+});
+
+// ════════════════════════════════════════════════════════════════
+// FILTER PER CABANG DI getInitialData
+//
+//  - PUSAT                -> semua baris (semua cabang)
+//  - tanpa konteks ('')   -> semua baris (pemanggil lama tidak kehilangan data)
+//  - cabang lain          -> hanya baris cabang itu
+//  - baris TANPA cabang   -> tidak dianggap PUSAT; hanya terlihat oleh PUSAT
+//                            karena PUSAT melihat semua baris
+// ════════════════════════════════════════════════════════════════
+
+r.suite('Backend — filter per cabang di getInitialData', () => {
+
+  const H14 = [
+    'ID Transaksi', 'Tanggal', 'Nama Produk', 'Volume (ml)', 'HPP Satuan', 'Jumlah', 'Total Harga',
+    'Metode Pembayaran', 'Uang Dibayar', 'Uang Kembali', 'Modal', 'Biaya Operasional', 'Laba bersih', 'Cabang'
+  ];
+
+  const baris = (id, cabang) => ([id, '01/11/2026 10:00', 'Semangci 250 ml', 250, 10000, 1, 15000, 'CASH', 15000, 0, 10000, 0, 5000, cabang]);
+
+  function setupFilter() {
+    return setupBackend({
+      penjualanRows: [H14,
+        baris('FR-A1', 'CABANG-A'),
+        baris('FR-B1', 'CABANG-B'),
+        baris('FR-A2', 'CABANG-A'),
+        baris('FR-TANPA', '')
+      ]
+    });
+  }
+
+  const idDari = (payload) => payload.penjualan.slice(1).map(row => row[0]).sort();
+
+  r.test('PUSAT melihat semua baris, termasuk yang belum berlabel cabang', () => {
+    const { backend } = setupFilter();
+    const out = backend.getInitialData(60, 'PUSAT');
+
+    r.assertEq(out.penjualan.length, 5, 'header + 4 baris');
+    r.assertEq(idDari(out).join(','), 'FR-A1,FR-A2,FR-B1,FR-TANPA', 'semua ID terkirim');
+    r.assertEq(out.cabang, 'PUSAT', 'konteks cabang dilaporkan');
+  });
+
+  r.test('cabang lain hanya melihat barisnya sendiri', () => {
+    const { backend } = setupFilter();
+    const out = backend.getInitialData(60, 'CABANG-A');
+
+    r.assertEq(out.penjualan.length, 3, 'header + 2 baris CABANG-A');
+    r.assertEq(idDari(out).join(','), 'FR-A1,FR-A2', 'hanya baris CABANG-A');
+    for (const row of out.penjualan.slice(1)) r.assertEq(row[13], 'CABANG-A', 'setiap baris berlabel CABANG-A');
+  });
+
+  r.test('baris TANPA cabang tidak dianggap PUSAT', () => {
+    const { backend } = setupFilter();
+    const pusat = backend.getInitialData(60, 'PUSAT');
+    const tanpaLabel = pusat.penjualan.filter(row => row[0] === 'FR-TANPA')[0];
+
+    r.assertEq(tanpaLabel[13], '', 'baris tetap tanpa cabang, tidak dilabeli ulang PUSAT');
+    // Dan kasir cabang lain tidak menerimanya sama sekali.
+    const a = backend.getInitialData(60, 'CABANG-A');
+    r.assertOk(a.penjualan.every(row => row[0] !== 'FR-TANPA'), 'cabang A tidak melihat baris tanpa cabang');
+    // Cabang bernama PUSAT pun bukan "keranjang sampah" untuk baris kosong:
+    // ia melihatnya karena melihat semua, dan labelnya tetap kosong.
+    r.assertEq(tanpaLabel[13] !== 'PUSAT', true, 'label kosong tidak berubah jadi PUSAT');
+  });
+
+  r.test('tanpa konteks cabang -> semua baris (pemanggil lama aman)', () => {
+    const { backend } = setupFilter();
+    const out = backend.getInitialData(60);
+
+    r.assertEq(out.penjualan.length, 5, 'tidak ada data yang disembunyikan');
+    r.assertEq(out.cabang, '', 'konteks kosong dilaporkan apa adanya');
+  });
+
+  r.test('nilai cabang tidak peka huruf besar/spasi', () => {
+    const { backend } = setupFilter();
+    const out = backend.getInitialData(60, ' cabang-a ');
+
+    r.assertEq(out.penjualan.length, 3, 'spasi & huruf besar diabaikan');
+  });
+
+  r.test('cache per cabang benar-benar terpakai: cabang A tidak melihat baris baru sampai cache dibuang', () => {
+    const { backend, spreadsheet } = setupFilter();
+
+    const pertama = backend.getInitialDataBerCache(60, 'CABANG-A');
+    r.assertEq(pertama.penjualan.length, 3, 'awal: header + 2 baris');
+
+    spreadsheet.__penjualan.__state.rows.push(baris('FR-A3', 'CABANG-A'));
+    const kedua = backend.getInitialDataBerCache(60, 'CABANG-A');
+    r.assertEq(kedua.penjualan.length, 3, 'panggilan kedua dari cache (baris baru belum terlihat)');
+
+    backend.__sandbox.buangCacheAwal();
+    const ketiga = backend.getInitialDataBerCache(60, 'CABANG-A');
+    r.assertEq(ketiga.penjualan.length, 4, 'setelah cache dibuang, baris baru masuk');
+  });
+
+  r.test('cache cabang A tidak dipakai untuk cabang B (filter + kunci sejalan)', () => {
+    const { backend } = setupFilter();
+
+    const a = backend.getInitialDataBerCache(60, 'CABANG-A');
+    const b = backend.getInitialDataBerCache(60, 'CABANG-B');
+
+    r.assertEq(a.penjualan.length, 3, 'A: 2 baris');
+    r.assertEq(b.penjualan.length, 2, 'B: 1 baris');
+    r.assertEq(b.penjualan[1][0], 'FR-B1', 'B menerima barisnya sendiri, bukan baris A dari cache');
+  });
+
+});
+
+// ════════════════════════════════════════════════════════════════
+// STOK PER CABANG (sheet "Stok_Cabang") — FASE 3
+//
+// Produk.Stok tetap = stok TOTAL. Stok_Cabang = rincian per cabang.
+// Aturan fallback F-1..F-6: semua kegagalan stok cabang hanya LOG; checkout
+// dan tambah stok TIDAK pernah gagal karenanya.
+// ════════════════════════════════════════════════════════════════
+
+r.suite('Backend — stok per cabang (Fase 3)', () => {
+
+  const H14 = [
+    'ID Transaksi', 'Tanggal', 'Nama Produk', 'Volume (ml)', 'HPP Satuan', 'Jumlah', 'Total Harga',
+    'Metode Pembayaran', 'Uang Dibayar', 'Uang Kembali', 'Modal', 'Biaya Operasional', 'Laba bersih', 'Cabang'
+  ];
+
+  const USER_KASIR = [
+    ['username', 'password', 'role', 'Cabang'],
+    ['kasir', 'kasir123', 'KASIR', 'CABANG-2']
+  ];
+
+  const CART = [{ id: '1', nama: 'Semangci 250 ml', jumlah: 2, total: 30000 }];
+
+  function setupStok(stokCabang) {
+    const s = setupBackend({ penjualanRows: [H14], userRows: USER_KASIR });
+    if (stokCabang) {
+      const sh = s.spreadsheet.insertSheet('Stok_Cabang');
+      sh.getRange(1, 1, stokCabang.length, stokCabang[0].length).setValues(stokCabang);
+      s.stokSheet = sh;
+    }
+    return s;
+  }
+
+  r.test('F-2: sheet Stok_Cabang belum ada -> checkout sukses, hanya Produk.Stok berubah', () => {
+    const { backend, spreadsheet } = setupStok(null);
+
+    const res = backend.prosesCheckout(CART, 'CASH', 50000, { username: 'kasir' });
+
+    r.assertEq(res.status, 'success', 'checkout tidak gagal');
+    r.assertEq(spreadsheet.__produk.__rows()[1][2], 48, 'Produk.Stok (total) tetap berkurang');
+    r.assertEq(spreadsheet.getSheetByName('Stok_Cabang'), null, 'tidak membuat sheet sendiri');
+  });
+
+  r.test('F-3: kolom cabang itu belum ada -> checkout sukses, kolom PUSAT tidak tersentuh', () => {
+    const { backend, spreadsheet, stokSheet } = setupStok([
+      ['ID Produk', 'PUSAT'],
+      ['1', 50]
+    ]);
+
+    const res = backend.prosesCheckout(CART, 'CASH', 50000, { username: 'kasir' });
+
+    r.assertEq(res.status, 'success', 'checkout tidak gagal');
+    r.assertEq(stokSheet.getRange(2, 2).getValue(), 50, 'stok PUSAT tidak dikurangi cabang lain');
+    r.assertEq(spreadsheet.__produk.__rows()[1][2], 48, 'Produk.Stok tetap berkurang');
+  });
+
+  r.test('checkout mengurangi kolom cabang transaksi, bukan cabang lain', () => {
+    const { backend, spreadsheet, stokSheet } = setupStok([
+      ['ID Produk', 'PUSAT', 'CABANG-2'],
+      ['1', 50, 7],
+      ['2', 30, 3]
+    ]);
+
+    const res = backend.prosesCheckout(CART, 'CASH', 50000, { username: 'kasir' });
+
+    r.assertEq(res.status, 'success', 'checkout sukses');
+    r.assertEq(stokSheet.getRange(2, 3).getValue(), 5, 'CABANG-2: 7 -> 5');
+    r.assertEq(stokSheet.getRange(2, 2).getValue(), 50, 'PUSAT tidak berubah');
+    r.assertEq(stokSheet.getRange(3, 3).getValue(), 3, 'produk lain tidak berubah');
+    r.assertEq(spreadsheet.__produk.__rows()[1][2], 48, 'Produk.Stok total 50 -> 48');
+  });
+
+  r.test('F-4: produk tidak punya baris di Stok_Cabang -> dilewati, transaksi tetap sukses', () => {
+    const { backend, spreadsheet, stokSheet } = setupStok([
+      ['ID Produk', 'CABANG-2'],
+      ['999', 10]
+    ]);
+
+    const res = backend.prosesCheckout(CART, 'CASH', 50000, { username: 'kasir' });
+
+    r.assertEq(res.status, 'success', 'checkout sukses');
+    r.assertEq(stokSheet.getRange(2, 2).getValue(), 10, 'baris lain tidak berubah');
+    r.assertEq(spreadsheet.__produk.__rows()[1][2], 48, 'Produk.Stok tetap berkurang');
+  });
+
+  r.test('F-5: sel stok cabang KOSONG -> tidak ditulis (bukan 0 lalu negatif)', () => {
+    const { backend, spreadsheet, stokSheet } = setupStok([
+      ['ID Produk', 'CABANG-2'],
+      ['1', '']
+    ]);
+
+    const res = backend.prosesCheckout(CART, 'CASH', 50000, { username: 'kasir' });
+
+    r.assertEq(res.status, 'success', 'checkout sukses');
+    r.assertEq(stokSheet.getRange(2, 2).getValue(), '', 'sel tetap kosong, tidak jadi -2');
+    r.assertEq(spreadsheet.__produk.__rows()[1][2], 48, 'Produk.Stok tetap berkurang');
+  });
+
+  r.test('checkout tanpa identitas -> dicatat atas PUSAT, jadi stok PUSAT yang berkurang', () => {
+    const { backend, spreadsheet, stokSheet } = setupStok([
+      ['ID Produk', 'PUSAT', 'CABANG-2'],
+      ['1', 50, 7]
+    ]);
+
+    const res = backend.prosesCheckout(CART, 'CASH', 50000);
+
+    r.assertEq(res.status, 'success', 'checkout sukses');
+    r.assertEq(spreadsheet.__penjualan.__rows()[1][13], 'PUSAT', 'baris dicatat atas PUSAT (Fase 1)');
+    r.assertEq(stokSheet.getRange(2, 2).getValue(), 48, 'stok PUSAT ikut berkurang, konsisten dengan barisnya');
+    r.assertEq(stokSheet.getRange(2, 3).getValue(), 7, 'CABANG-2 tidak berubah');
+    r.assertEq(spreadsheet.__produk.__rows()[1][2], 48, 'Produk.Stok tetap berkurang');
+  });
+
+  r.test('tambah stok DENGAN cabang -> Produk.Stok & kolom cabang sama-sama naik', () => {
+    const { backend, spreadsheet, stokSheet } = setupStok([
+      ['ID Produk', 'PUSAT', 'CABANG-2'],
+      ['1', 50, 7]
+    ]);
+
+    const pesan = backend.tambahStokProduk('1', 5, 'KASIR', 'CABANG-2');
+
+    r.assertEq(spreadsheet.__produk.__rows()[1][2], 55, 'Produk.Stok 50 -> 55');
+    r.assertEq(stokSheet.getRange(2, 3).getValue(), 12, 'CABANG-2: 7 -> 12');
+    r.assertEq(stokSheet.getRange(2, 2).getValue(), 50, 'PUSAT tidak berubah');
+    r.assertOk(pesan.indexOf('5') !== -1, 'pesan menyebut jumlah');
+  });
+
+  r.test('tambah stok TANPA cabang -> hanya Produk.Stok (perilaku lama)', () => {
+    const { backend, spreadsheet, stokSheet } = setupStok([
+      ['ID Produk', 'CABANG-2'],
+      ['1', 7]
+    ]);
+
+    backend.tambahStokProduk('1', 5, 'KASIR');
+
+    r.assertEq(spreadsheet.__produk.__rows()[1][2], 55, 'Produk.Stok naik');
+    r.assertEq(stokSheet.getRange(2, 2).getValue(), 7, 'stok cabang tidak berubah');
+  });
+
+  r.test('tambah stok untuk cabang tanpa kolom -> Produk naik + pesan jujur soal stok cabang', () => {
+    const { backend, spreadsheet } = setupStok([
+      ['ID Produk', 'PUSAT'],
+      ['1', 50]
+    ]);
+
+    const pesan = backend.tambahStokProduk('1', 5, 'KASIR', 'CABANG-9');
+
+    r.assertEq(spreadsheet.__produk.__rows()[1][2], 55, 'Produk.Stok tetap naik (fail-open)');
+    r.assertIncludes(pesan, 'belum ikut naik', 'pesan tidak mengklaim stok cabang berubah');
+  });
+
+  r.test('header cabang tidak peka huruf besar/spasi', () => {
+    const { backend, stokSheet } = setupStok([
+      ['ID Produk', ' cabang-2 '],
+      ['1', 7]
+    ]);
+
+    backend.prosesCheckout(CART, 'CASH', 50000, { username: 'kasir' });
+
+    r.assertEq(stokSheet.getRange(2, 2).getValue(), 5, 'kolom " cabang-2 " tetap dikenali');
   });
 
 });

@@ -283,7 +283,10 @@ r.suite('Frontend - struktur payload penjualan (13 kolom, konsisten header==data
 
     const hasil = backend.getInitialData(60);
     const header = hasil.penjualan[0];
-    r.assertEq(header.length, 13, 'header 13 kolom');
+    // 13 kolom inti + "cabang" di ujung (Fase 2 multi-cabang). Yang dijaga
+    // test ini tetap sama: header dan setiap baris WAJIB sama panjang.
+    r.assertEq(header.length, 14, 'header 13 kolom inti + cabang');
+    r.assertEq(header[13], 'cabang', 'cabang di ujung header');
     for (let i = 1; i < hasil.penjualan.length; i++) {
       r.assertEq(hasil.penjualan[i].length, header.length, 'baris ' + i + ' sama panjang dengan header');
     }
