@@ -1713,18 +1713,29 @@
         width: 100%;
       }
 
+      /* Header HP: chip boleh turun ke baris kedua daripada teksnya dipotong
+         (dulu flex:1 + ellipsis memotong "Cabang CABANG-2" jadi "Cabang CABA…"). */
       .header-info {
         width: 100%;
-        justify-content: space-between;
+        justify-content: flex-start;
+        flex-wrap: wrap;
         border-top: 1px solid var(--line);
         padding-top: 10px;
         gap: 8px;
       }
 
       .user-badge {
-        flex: 1;
+        flex: 0 0 auto;
         min-width: 0;
-        max-width: none;
+        max-width: 100%;
+        overflow: visible;
+        text-overflow: clip;
+        white-space: normal;
+      }
+
+      /* Tetap menempel kanan saat semua chip muat satu baris. */
+      .header-info .btn-logout {
+        margin-left: auto;
       }
 
       .live-badge span {
@@ -1803,6 +1814,27 @@
     }
 
     @media screen and (max-width: 480px) {
+      /* Chip header dirapatkan supaya "kasir" + "Cabang CABANG-2" + "Keluar"
+         biasanya tetap satu baris di 390px walau label cabang panjang. */
+      .user-badge {
+        padding: 8px 11px;
+        font-size: 12.5px;
+        gap: 6px;
+      }
+
+      .user-badge .ic {
+        width: 0.9em;
+        height: 0.9em;
+      }
+
+      .header-info {
+        gap: 7px;
+      }
+
+      .header-info .btn-logout {
+        padding: 10px 12px;
+      }
+
       .quick-cash-buttons {
         grid-template-columns: repeat(2, minmax(0, 1fr));
       }
