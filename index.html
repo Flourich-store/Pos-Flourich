@@ -3750,6 +3750,8 @@
       if (data.length > 1) {
         const sel = document.getElementById('selProduk');
         const tbody = document.querySelector('#stokTable tbody');
+        // Dibaca sekali, bukan per baris produk (sesi tidak berubah saat render).
+        const roleSesi = bacaRoleSesi();
 
         let selHTML = '';
         let tbodyHTML = '';
@@ -3768,7 +3770,7 @@
           `;
 
           let tombolAksi = '';
-          if (bacaRoleSesi() === 'SUPER_ADMIN') {
+          if (roleSesi === 'SUPER_ADMIN') {
             tombolAksi = `
               <button type="button" class="btn-table-action" onclick="event.stopPropagation(); aksiTambahStok('${idProd}','${namaProd.replace(/'/g, "\\'")}')" title="Tambah Stok"><svg class="ic" aria-hidden="true"><use href="#icon-plus"/></svg> Stok</button>
             `;
