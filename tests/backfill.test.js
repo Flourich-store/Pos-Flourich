@@ -1055,4 +1055,51 @@ r.suite('Migrasi multi-cabang - uji end-to-end di salinan', () => {
   });
 });
 
+r.suite('Migrasi multi-cabang - catat salinan dari Script Properties', () => {
+
+  r.test('property MC_SALINAN_ID kosong -> batal, tidak mencatat apa pun', () => {
+    const s = setupUjiSalinan();
+
+    const out = call(() => s.backend.sandbox.catatSalinanMigrasiDariProps());
+
+    r.assertEq(out.status, 'batal', 'batal');
+    r.assertIncludes(out.pesan, 'MC_SALINAN_ID', 'menyebut nama property');
+    r.assertEq(s.gas.scriptRuntime.props.MC_SALINAN_SPREADSHEET, undefined, 'tidak ada salinan tercatat');
+  });
+
+  r.test('property terisi -> salinan diverifikasi & dicatat (delegasi ke jalur manual)', () => {
+    const s = setupUjiSalinan();
+    s.gas.scriptRuntime.props.MC_SALINAN_ID = 'CADANGAN-1';
+
+    const out = call(() => s.backend.sandbox.catatSalinanMigrasiDariProps());
+
+    r.assertEq(out.status, 'ok', 'status ok: ' + out.pesan);
+    r.assertEq(out.salinan, 'CADANGAN-1', 'ID salinan dilaporkan');
+    r.assertEq(s.gas.scriptRuntime.props.MC_SALINAN_SPREADSHEET, 'CADANGAN-1', 'tercatat di MC_SALINAN_SPREADSHEET');
+  });
+
+  r.test('property berisi ID sumber -> ditolak (butuh salinan terpisah)', () => {
+    const s = setupUjiSalinan();
+    s.gas.scriptRuntime.props.MC_SALINAN_ID = 'SUMBER-1';
+
+    const out = call(() => s.backend.sandbox.catatSalinanMigrasiDariProps());
+
+    r.assertEq(out.status, 'batal', 'tidak dicatat');
+    r.assertIncludes(out.pesan, 'SUMBER', 'menjelaskan ID itu spreadsheet sumber');
+    r.assertEq(s.gas.scriptRuntime.props.MC_SALINAN_SPREADSHEET, undefined, 'MC_SALINAN tetap kosong');
+  });
+
+  r.test('property berisi ID tak terbuka -> error, tidak mencatat', () => {
+    const s = setupUjiSalinan();
+    s.gas.scriptRuntime.props.MC_SALINAN_ID = 'TIDAK-ADA-999';
+
+    const out = call(() => s.backend.sandbox.catatSalinanMigrasiDariProps());
+
+    r.assertEq(out.status, 'error', 'error');
+    r.assertIncludes(out.pesan, 'Tidak ditemukan', 'pesan menyebut file tidak ditemukan');
+    r.assertEq(s.gas.scriptRuntime.props.MC_SALINAN_SPREADSHEET, undefined, 'MC_SALINAN tetap kosong');
+  });
+
+});
+
 r.run('Backfill Kolom N..R').then(ok => { process.exit(ok ? 0 : 1); });

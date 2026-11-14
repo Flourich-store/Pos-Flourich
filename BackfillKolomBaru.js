@@ -1113,6 +1113,35 @@ function catatSalinanMigrasiManual(idAtauUrl) {
   return _mcCatatSalinanInti(idAtauUrl, getSpreadsheet(), props);
 }
 
+/** Script Property berisi ID salinan cadangan untuk migrasi produksi. */
+const MC_PROPS_SALINAN_ID = 'MC_SALINAN_ID';
+
+/**
+ * Entry point TANPA PARAMETER: catat salinan cadangan yang ID-nya sudah diisi
+ * di Script Properties (Project Settings > Script Properties > MC_SALINAN_ID).
+ *
+ * Dipisah supaya tidak ada fungsi sementara berisi ID yang harus ditempel lalu
+ * dihapus, dan supaya fungsi berparameter tidak perlu dijalankan dari dropdown
+ * (editor tidak bisa mengirim argumen). Verifikasi empat syarat tetap berjalan
+ * lewat catatSalinanMigrasiManual().
+ */
+function catatSalinanMigrasiDariProps() {
+  let props = null;
+  try { props = PropertiesService.getScriptProperties(); } catch (e) { props = _mcPropsMemori(); }
+
+  const id = String(props.getProperty(MC_PROPS_SALINAN_ID) || '').trim();
+  if (!id) {
+    return _bfJson({
+      status: 'batal',
+      pesan: 'Script Property ' + MC_PROPS_SALINAN_ID + ' belum diisi. Buka Project Settings > ' +
+        'Script Properties, tambahkan ' + MC_PROPS_SALINAN_ID + ' berisi ID salinan cadangan ' +
+        '(boleh URL lengkap), lalu jalankan fungsi ini lagi. Salinan harus dibuat SETELAH ' +
+        'perubahan terakhir pada spreadsheet sumber — salinan lama ditolak verifikasi.'
+    });
+  }
+  return catatSalinanMigrasiManual(id);
+}
+
 /**
  * Inti pencatatan salinan, dipisah dari wrapper supaya jalur uji
  * (ujiMigrasiMultiCabangDiSalinan) bisa memberi sumber & property SENDIRI
