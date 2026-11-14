@@ -2825,6 +2825,19 @@ r.suite('Backend — stok cabang untuk tampilan', () => {
     r.assertEq(sc.total['2'], 3, 'total = 3');
   });
 
+  r.test('kasir tidak menerima stok semua cabang di payload-nya', () => {
+    const s = setupUi([
+      ['ID Produk', 'PUSAT', 'CABANG-2'],
+      ['1', 40, 7]
+    ]);
+
+    const kasir = s.backend.getInitialData(60, 'CABANG-2');
+    const pemantau = s.backend.getInitialData(60, '');
+
+    r.assertEq(kasir.stokCabangSemua, null, 'kasir tidak dikirimi stok cabang lain');
+    r.assertOk(pemantau.stokCabangSemua && pemantau.stokCabangSemua.adaSheet, 'pemantau tetap dapat');
+  });
+
   r.test('tanpa sheet Stok_Cabang -> stokCabangSemua kosong, payload tetap jalan', () => {
     const { backend } = setupUi(null);
     const out = backend.getInitialData(60, '');

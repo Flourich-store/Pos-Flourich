@@ -887,9 +887,10 @@ function getInitialData(limitPenjualan, cabang) {
   const stokCabang = _stokCabangUntukPayload(ss, cabang);
 
   // ─── 3b. STOK SEMUA CABANG ───
-  // Dipakai dropdown "Stok per Cabang" (pemantau/SUPER_ADMIN). Satu kali baca
-  // sheet yang sama, jadi tidak menambah roundtrip bagi kasir.
-  const stokCabangSemua = _stokSemuaCabangPayload(ss);
+  // Hanya untuk konteks TANPA cabang — itulah sesi pemantau, satu-satunya yang
+  // menampilkan angka antar cabang. Kasir tidak perlu menerima stok cabang lain
+  // di payload-nya, dan satu baca sheet pun terhindari.
+  const stokCabangSemua = _cabangMelihatSemua(cabang) ? _stokSemuaCabangPayload(ss) : null;
 
   // ─── 4. RETURN GABUNGAN ───
   return {
@@ -1076,14 +1077,16 @@ function prosesCheckoutInti(cart, metode, uangDibayar, requestData) {
       // Cabang transaksi = cabang milik user di sheet User (bukan kiriman klien).
       // Role pemantau: akun PENGAWAS hanya membaca. Ditolak SEBELUM baris
       // penjualan/stok apa pun ditulis, jadi tidak ada transaksi setengah jadi.
-      if (_roleUntukCheckout(ss.getSheetByName("User"), requestData) === ROLE_PENGAWAS) {
+      // Satu kali baca sheet User untuk cabang + role sekaligus.
+      const infoUser = _infoUserCheckout(ss.getSheetByName("User"), requestData);
+      if (infoUser.role === ROLE_PENGAWAS) {
         return {
           status: "error",
           message: "Akun " + ROLE_PENGAWAS + " hanya untuk memantau transaksi. Transaksi tidak dapat dibuat dari akun ini."
         };
       }
 
-      const cabangTransaksi = _cabangUntukCheckout(ss.getSheetByName("User"), requestData);
+      const cabangTransaksi = infoUser.cabang;
       const hilangPenting = kolomPenting.filter(f => petaJual.col[f] === undefined);
       if (hilangPenting.length) {
         return {
@@ -2178,72 +2181,51 @@ function petaKolomUserSheet(sh) {
 }
 
 /**
- * Cabang untuk satu transaksi checkout.
- *
- * FAIL-OPEN: sheet User tidak ada, kolom Cabang belum ada (sheet belum
- * termigrasi), atau username tidak dikenal -> PUSAT. Checkout TIDAK boleh
- * gagal hanya karena cabang tak terbaca.
+ * Cabang + role user yang sedang checkout, dibaca SEKALI dari sheet User.
  *
  * Cabang TIDAK diambil dari requestData.cabang (klien bisa mengirim nilai apa
- * pun). Yang dipakai hanya cabang milik username yang benar-benar ada di sheet
- * User. Bila klien belum mengirim username, hasilnya PUSAT — sama dengan isi
- * kolom Cabang untuk seluruh data lama hasil migrasi.
+ * pun); yang dipakai hanya baris milik username yang benar-benar ada. Role
+ * dipakai untuk menolak akun PENGAWAS.
+ *
+ * FAIL-OPEN: sheet User tidak ada, kolom Cabang belum ada (sheet belum
+ * termigrasi), username kosong/tidak dikenal -> cabang PUSAT dan role '' (boleh
+ * jual). Checkout tidak boleh gagal hanya karena atribut user tak terbaca.
  */
-function _cabangUntukCheckout(shUser, requestData) {
+function _infoUserCheckout(shUser, requestData) {
+  const hasil = { cabang: CABANG_AWAL_DEFAULT, role: '' };
   const namaUser = String(
     (requestData && (requestData.username || requestData.user)) || ''
   ).trim();
-  if (!shUser || !namaUser) return CABANG_AWAL_DEFAULT;
+  if (!shUser || !namaUser) return hasil;
 
   try {
     const peta = petaKolomUserSheet(shUser);
-    // Kolom Cabang belum ada: jangan baca data User sama sekali.
-    if (peta.col.cabang === undefined) return CABANG_AWAL_DEFAULT;
+    // Sheet User belum termigrasi (tidak ada kolom Cabang maupun Role): tidak
+    // perlu membaca seluruh baris, pakai default.
+    if (peta.col.cabang === undefined && peta.col.role === undefined) return hasil;
 
     const data = shUser.getDataRange().getValues();
     const target = _normHeader(namaUser);
     for (let i = 1; i < data.length; i++) {
       const user = _normHeader(ambilKolom(data[i], peta, 'username', ''));
       if (!user || user !== target) continue;
-      const cabang = String(ambilKolom(data[i], peta, 'cabang', '') || '').trim();
-      return cabang || CABANG_AWAL_DEFAULT;
+      const cabang = peta.col.cabang === undefined
+        ? ''
+        : String(ambilKolom(data[i], peta, 'cabang', '') || '').trim();
+      hasil.cabang = cabang || CABANG_AWAL_DEFAULT;
+      hasil.role = String(ambilKolom(data[i], peta, 'role', '') || '').trim().toUpperCase();
+      return hasil;
     }
-    Logger.log('_cabangUntukCheckout: username "' + namaUser + '" tidak ada di sheet User — cabang jatuh ke ' + CABANG_AWAL_DEFAULT + '.');
+    Logger.log('_infoUserCheckout: username "' + namaUser + '" tidak ada di sheet User — cabang jatuh ke ' + CABANG_AWAL_DEFAULT + '.');
   } catch (e) {
-    Logger.log('_cabangUntukCheckout: gagal membaca sheet User (' + e + ') — cabang jatuh ke ' + CABANG_AWAL_DEFAULT + '.');
+    Logger.log('_infoUserCheckout: gagal membaca sheet User (' + e + ') — cabang jatuh ke ' + CABANG_AWAL_DEFAULT + '.');
   }
-  return CABANG_AWAL_DEFAULT;
+  return hasil;
 }
 
-/**
- * Role user yang sedang checkout, dibaca dari sheet User berdasarkan username.
- *
- * FAIL-OPEN KE ARAH "BOLEH JUAL": sheet/kolom belum ada, username kosong, atau
- * user tidak dikenal -> '' (bukan PENGAWAS), sehingga perilaku lama tidak
- * berubah karena fitur pemantau. Yang diblokir hanya role yang benar-benar
- * tertulis PENGAWAS di sheet — bukan tebakan dari klien.
- */
-function _roleUntukCheckout(shUser, requestData) {
-  const namaUser = String(
-    (requestData && (requestData.username || requestData.user)) || ''
-  ).trim();
-  if (!shUser || !namaUser) return '';
-
-  try {
-    const peta = petaKolomUserSheet(shUser);
-    if (peta.col.role === undefined) return '';
-
-    const data = shUser.getDataRange().getValues();
-    const target = _normHeader(namaUser);
-    for (let i = 1; i < data.length; i++) {
-      const user = _normHeader(ambilKolom(data[i], peta, 'username', ''));
-      if (!user || user !== target) continue;
-      return String(ambilKolom(data[i], peta, 'role', '') || '').trim().toUpperCase();
-    }
-  } catch (e) {
-    Logger.log('_roleUntukCheckout: gagal membaca sheet User (' + e + ') — role dianggap bukan pemantau.');
-  }
-  return '';
+/** Cabang untuk checkout; lihat _infoUserCheckout (baca sheet User satu kali). */
+function _cabangUntukCheckout(shUser, requestData) {
+  return _infoUserCheckout(shUser, requestData).cabang;
 }
 
 /**

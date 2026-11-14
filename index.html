@@ -1846,7 +1846,7 @@
         flex: 1 1 45%;
       }
 
-      /* Kartu "Stok per Cabang": 45 kolom (PRODUK + PUSAT + CABANG-2 + TOTAL)
+      /* Kartu "Stok per Cabang": 4 kolom (PRODUK + PUSAT + CABANG-2 + TOTAL)
          harus muat tanpa geser horizontal di 360-390px. Padding dirapatkan
          hanya di tabel ini supaya kolom Total tetap terlihat. */
       #stokCabangTable th,
@@ -2448,7 +2448,7 @@
      * Mode pemantau: sembunyikan panel jual & keranjang, sisakan riwayat.
      *
      * Server tetap menolak checkout dari akun PENGAWAS (lihat
-     * _roleUntukCheckout di Code.js), jadi menyembunyikan UI di sini hanya
+     * _infoUserCheckout di Code.js), jadi menyembunyikan UI di sini hanya
      * mencegah kebingungan — bukan satu-satunya pengaman.
      */
     function terapkanModePengawas(role) {
@@ -2465,18 +2465,9 @@
       }
       perbaruiBadgeCabang();
       renderStokCabang();
-      try {
-        siapkanFilterCabang();
-        applyFilter(true);
-      } catch (e) { }
-    }
-
-    // Kartu "Stok per Cabang" KHUSUS pemantau.
-    // Super admin sudah punya panel jual + kolom SISA per produk, jadi tabel
-    // semua cabang hanya menambah gangguan di layarnya. Permintaan pemilik:
-    // pemantauan lintas cabang cukup dipegang role PENGAWAS.
-    function roleBolehPantauStok() {
-      return bacaRoleSesi() === 'PENGAWAS';
+      // Dropdown filter cabang ikut menyesuaikan role. Penyaringan ulang tidak
+      // perlu di sini: setiap render data memanggil applyFilter sendiri.
+      siapkanFilterCabang();
     }
 
     /**
@@ -2494,7 +2485,7 @@
       const daftar = (stokSemuaCabang && Array.isArray(stokSemuaCabang.daftarCabang))
         ? stokSemuaCabang.daftarCabang
         : [];
-      const boleh = roleBolehPantauStok() && stokSemuaCabang && stokSemuaCabang.adaSheet && daftar.length > 0;
+      const boleh = sesiPemantau() && stokSemuaCabang && stokSemuaCabang.adaSheet && daftar.length > 0;
       if (!boleh) { card.classList.add('hidden'); return; }
       card.classList.remove('hidden');
 
@@ -3776,9 +3767,8 @@
             <option value="${idProd}">${namaProd} - Rp ${hargaProd.toLocaleString('id-ID')} (Stok: ${stokTampil})</option>
           `;
 
-          const role = sessionStorage.getItem('pos_role');
           let tombolAksi = '';
-          if (role === 'SUPER_ADMIN') {
+          if (bacaRoleSesi() === 'SUPER_ADMIN') {
             tombolAksi = `
               <button type="button" class="btn-table-action" onclick="event.stopPropagation(); aksiTambahStok('${idProd}','${namaProd.replace(/'/g, "\\'")}')" title="Tambah Stok"><svg class="ic" aria-hidden="true"><use href="#icon-plus"/></svg> Stok</button>
             `;
@@ -4014,7 +4004,7 @@
     }
 
     function aksiTambahStok(id, nama) {
-      const role = sessionStorage.getItem('pos_role');
+      const role = bacaRoleSesi();
       if (role !== 'SUPER_ADMIN' && role !== 'KASIR') {
         alert('Anda tidak memiliki hak akses untuk menambah stok.');
         return;
