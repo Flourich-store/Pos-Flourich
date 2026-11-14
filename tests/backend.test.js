@@ -2804,4 +2804,72 @@ r.suite('Backend — stok cabang untuk tampilan', () => {
 
 });
 
+// ════════════════════════════════════════════════════════════════
+// ROLE PEMANTAU (PENGAWAS)
+//
+// Akun pemantau membaca transaksi SEMUA cabang, tetapi tidak boleh menjual /
+// menambah stok. Penolakan dilakukan di server, bukan hanya disembunyikan di UI.
+// ════════════════════════════════════════════════════════════════
+
+r.suite('Backend — role pemantau (PENGAWAS)', () => {
+
+  const H14 = [
+    'ID Transaksi', 'Tanggal', 'Nama Produk', 'Volume (ml)', 'HPP Satuan', 'Jumlah', 'Total Harga',
+    'Metode Pembayaran', 'Uang Dibayar', 'Uang Kembali', 'Modal', 'Biaya Operasional', 'Laba bersih', 'Cabang'
+  ];
+
+  const USERS = [
+    ['username', 'password', 'role', 'Cabang'],
+    ['pengawas', 'pantau123', 'PENGAWAS', ''],
+    ['kasir', 'kasir123', 'KASIR', 'CABANG-2']
+  ];
+
+  const CART = [{ id: '1', nama: 'Semangci 250 ml', jumlah: 2, total: 30000 }];
+
+  function setup() {
+    return setupBackend({ penjualanRows: [H14], userRows: USERS });
+  }
+
+  r.test('checkout dari akun PENGAWAS ditolak SEBELUM menulis penjualan/stok', () => {
+    const { backend, spreadsheet } = setup();
+
+    const res = backend.prosesCheckout(CART, 'CASH', 50000, { username: 'pengawas' });
+
+    r.assertEq(res.status, 'error', 'ditolak');
+    r.assertIncludes(res.message, 'memantau', 'pesan menjelaskan perannya');
+    r.assertEq(spreadsheet.__penjualan.__rows().length, 1, 'hanya baris header, tidak ada transaksi');
+    r.assertEq(spreadsheet.__produk.__rows()[1][2], 50, 'stok tidak berkurang');
+  });
+
+  r.test('kasir biasa tetap bisa checkout seperti sebelumnya', () => {
+    const { backend, spreadsheet } = setup();
+
+    const res = backend.prosesCheckout(CART, 'CASH', 50000, { username: 'kasir' });
+
+    r.assertEq(res.status, 'success', 'checkout normal');
+    r.assertEq(spreadsheet.__penjualan.__rows().length, 2, 'transaksi tercatat');
+  });
+
+  r.test('tanpa username / username tak dikenal -> tetap boleh (fail-open)', () => {
+    const { backend } = setup();
+
+    r.assertEq(backend.prosesCheckout(CART, 'CASH', 50000).status, 'success', 'tanpa username');
+    r.assertEq(
+      backend.prosesCheckout(CART, 'CASH', 50000, { username: 'entah-siapa' }).status,
+      'success',
+      'username tak dikenal tidak dikunci'
+    );
+  });
+
+  r.test('tambah stok oleh PENGAWAS ditolak (stok tidak berubah)', () => {
+    const { backend, spreadsheet } = setup();
+
+    const pesan = backend.tambahStokProduk('1', 5, 'PENGAWAS', 'PUSAT');
+
+    r.assertIncludes(pesan, 'hak akses', 'pesan penolakan');
+    r.assertEq(spreadsheet.__produk.__rows()[1][2], 50, 'stok tetap');
+  });
+
+});
+
 r.run('Backend Code.js').then(ok => { process.exit(ok ? 0 : 1); });

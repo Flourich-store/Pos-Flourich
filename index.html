@@ -2108,7 +2108,7 @@
 
     <div class="container">
       <!-- Input Penjualan Card -->
-      <div class="card">
+      <div class="card" id="cardInputPenjualan">
         <div class="card-header-flex">
           <h3><svg class="ic" aria-hidden="true"><use href="#icon-cart-plus"/></svg> Input Penjualan</h3>
           <div class="view-switcher" role="group" aria-label="Mode Tampilan Produk">
@@ -2176,7 +2176,7 @@
       </div>
 
       <!-- Keranjang Belanja Card -->
-      <div class="card">
+      <div class="card" id="cardKeranjang">
         <h3><svg class="ic" aria-hidden="true"><use href="#icon-basket-shopping"/></svg> Keranjang Belanja</h3>
 
         <div id="cartDisplay" class="cart-list">
@@ -2396,10 +2396,47 @@
       try { return String(sessionStorage.getItem('pos_username') || '').trim(); } catch (e) { return ''; }
     }
 
+    // Role sesi. Dipakai untuk mode pemantau: akun PENGAWAS hanya membaca
+    // riwayat seluruh cabang, tidak menjual dan tidak menambah stok.
+    function bacaRoleSesi() {
+      try { return String(sessionStorage.getItem('pos_role') || '').trim().toUpperCase(); } catch (e) { return ''; }
+    }
+
+    function sesiPemantau() {
+      return bacaRoleSesi() === 'PENGAWAS';
+    }
+
+    /**
+     * Mode pemantau: sembunyikan panel jual & keranjang, sisakan riwayat.
+     *
+     * Server tetap menolak checkout dari akun PENGAWAS (lihat
+     * _roleUntukCheckout di Code.js), jadi menyembunyikan UI di sini hanya
+     * mencegah kebingungan — bukan satu-satunya pengaman.
+     */
+    function terapkanModePengawas(role) {
+      const pantau = String(role || bacaRoleSesi()).trim().toUpperCase() === 'PENGAWAS';
+      try {
+        if (pantau) document.body.classList.add('mode-pantau');
+        else document.body.classList.remove('mode-pantau');
+      } catch (e) { }
+      var panel = ['cardInputPenjualan', 'cardKeranjang'];
+      for (var i = 0; i < panel.length; i++) {
+        var el = document.getElementById(panel[i]);
+        if (!el || !el.classList) continue;
+        if (pantau) el.classList.add('hidden'); else el.classList.remove('hidden');
+      }
+      perbaruiBadgeCabang();
+    }
+
     // Badge cabang di header: kasir harus tahu data & stok mana yang dilihatnya.
     function perbaruiBadgeCabang() {
       const el = document.getElementById('lblCabang');
       if (!el) return;
+      if (sesiPemantau()) {
+        el.textContent = 'Semua cabang (pemantau)';
+        el.title = 'Akun pemantau: membaca transaksi seluruh cabang, tidak dapat menjual atau mengubah stok';
+        return;
+      }
       const cab = bacaCabangSesi();
       el.textContent = cab ? ('Cabang ' + cab) : 'Cabang belum diatur';
       el.title = cab
@@ -2909,6 +2946,7 @@
         document.getElementById('loginPage').classList.add('hidden');
         document.getElementById('mainPage').classList.remove('hidden');
         updateUserBadge(savedUser, savedRole);
+        terapkanModePengawas(savedRole);
         // Sesi dipulihkan: ambil data terbaru dari server, bukan cuma render cache
         muatDataAwalSetelahLogin();
         if (!isLocalMode) startRealtimeSync();
@@ -3171,9 +3209,15 @@
           sessionStorage.setItem('pos_role', res.role);
           // Cabang ikut disimpan: dipakai untuk menyaring data awal & sebagai
           // konteks tampilan. Backend lama tidak mengirim field ini -> ''.
-          sessionStorage.setItem('pos_cabang', res.cabang || '');
+          // Pemantau selalu memakai konteks "semua cabang" ('' = tanpa saringan),
+          // apa pun isi kolom Cabang miliknya, karena tugasnya memantau keduanya.
+          const cabangSesi = (String(res.role || '').trim().toUpperCase() === 'PENGAWAS')
+            ? ''
+            : (res.cabang || '');
+          sessionStorage.setItem('pos_cabang', cabangSesi);
 
           updateUserBadge(res.username, res.role);
+          terapkanModePengawas(res.role);
           // Sisa filter dari kunjungan sebelumnya (filterSearch / rentang tanggal)
           // tidak pernah dikosongkan, sehingga applyFilter() langsung menyaring
           // seluruh baris dan tabel riwayat tampil kosong padahal data ada.
@@ -3249,6 +3293,9 @@
 
       document.getElementById('loginPage').classList.remove('hidden');
       document.getElementById('mainPage').classList.add('hidden');
+      // Sesi berakhir: buang mode pemantau supaya login berikutnya (kasir)
+      // mendapat panel jual kembali.
+      try { terapkanModePengawas(''); } catch (e) { }
       renderCart();
     }
 

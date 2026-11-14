@@ -1067,6 +1067,15 @@ function prosesCheckoutInti(cart, metode, uangDibayar, requestData) {
       const kolomPenting = ['id', 'tanggal', 'namaProduk', 'jumlah', 'totalHarga', 'labaBersih'];
 
       // Cabang transaksi = cabang milik user di sheet User (bukan kiriman klien).
+      // Role pemantau: akun PENGAWAS hanya membaca. Ditolak SEBELUM baris
+      // penjualan/stok apa pun ditulis, jadi tidak ada transaksi setengah jadi.
+      if (_roleUntukCheckout(ss.getSheetByName("User"), requestData) === ROLE_PENGAWAS) {
+        return {
+          status: "error",
+          message: "Akun " + ROLE_PENGAWAS + " hanya untuk memantau transaksi. Transaksi tidak dapat dibuat dari akun ini."
+        };
+      }
+
       const cabangTransaksi = _cabangUntukCheckout(ss.getSheetByName("User"), requestData);
       const hilangPenting = kolomPenting.filter(f => petaJual.col[f] === undefined);
       if (hilangPenting.length) {
@@ -1959,6 +1968,12 @@ const PETA_KOLOM_USER = {
 /** Cabang bawaan bila cabang tidak terbaca / sheet belum termigrasi. */
 const CABANG_AWAL_DEFAULT = 'PUSAT';
 
+/**
+ * Role pemantau: hanya MEMBACA transaksi (semua cabang), tidak boleh menjual
+ * atau mengubah stok. Ditulis di kolom "role" sheet User, mis. PENGAWAS.
+ */
+const ROLE_PENGAWAS = 'PENGAWAS';
+
 /** Sheet stok per cabang: "ID Produk | PUSAT | <cabang lain...>". */
 const NAMA_SHEET_STOK_CABANG = 'Stok_Cabang';
 
@@ -2191,6 +2206,37 @@ function _cabangUntukCheckout(shUser, requestData) {
     Logger.log('_cabangUntukCheckout: gagal membaca sheet User (' + e + ') — cabang jatuh ke ' + CABANG_AWAL_DEFAULT + '.');
   }
   return CABANG_AWAL_DEFAULT;
+}
+
+/**
+ * Role user yang sedang checkout, dibaca dari sheet User berdasarkan username.
+ *
+ * FAIL-OPEN KE ARAH "BOLEH JUAL": sheet/kolom belum ada, username kosong, atau
+ * user tidak dikenal -> '' (bukan PENGAWAS), sehingga perilaku lama tidak
+ * berubah karena fitur pemantau. Yang diblokir hanya role yang benar-benar
+ * tertulis PENGAWAS di sheet — bukan tebakan dari klien.
+ */
+function _roleUntukCheckout(shUser, requestData) {
+  const namaUser = String(
+    (requestData && (requestData.username || requestData.user)) || ''
+  ).trim();
+  if (!shUser || !namaUser) return '';
+
+  try {
+    const peta = petaKolomUserSheet(shUser);
+    if (peta.col.role === undefined) return '';
+
+    const data = shUser.getDataRange().getValues();
+    const target = _normHeader(namaUser);
+    for (let i = 1; i < data.length; i++) {
+      const user = _normHeader(ambilKolom(data[i], peta, 'username', ''));
+      if (!user || user !== target) continue;
+      return String(ambilKolom(data[i], peta, 'role', '') || '').trim().toUpperCase();
+    }
+  } catch (e) {
+    Logger.log('_roleUntukCheckout: gagal membaca sheet User (' + e + ') — role dianggap bukan pemantau.');
+  }
+  return '';
 }
 
 /**

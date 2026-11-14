@@ -425,6 +425,62 @@ r.suite('Login — cabang sesi disimpan', () => {
 
 });
 
+// ════════════════════════════════════════════════════════════════
+// ROLE PEMANTAU (PENGAWAS) DI UI
+// ════════════════════════════════════════════════════════════════
+
+r.suite('Login — mode pemantau (PENGAWAS)', () => {
+
+  function loginSebagai(role, cabang) {
+    const sk = loadLoginSkenario({});
+    sk.dom.window.google.script.run.checkLogin = () => ({
+      status: true, username: 'pengawas', role: role, cabang: cabang, dataAwal: RESPON_VALID
+    });
+    isiKredensialAdmin(sk.dom);
+    sk.app.call('login');
+    return sk;
+  }
+
+  r.test('pemantau selalu memakai konteks semua cabang walau kolom Cabang terisi', () => {
+    const sk = loginSebagai('PENGAWAS', 'CABANG-2');
+
+    r.assertEq(sk.dom.sessionStorage.getItem('pos_cabang'), '', 'cabang sesi dikosongkan');
+  });
+
+  r.test('panel jual & keranjang disembunyikan, badge menjelaskan perannya', () => {
+    const sk = loginSebagai('PENGAWAS', 'PUSAT');
+    const doc = sk.dom.window.document;
+
+    r.assertOk(doc.body.classList.contains('mode-pantau'), 'body memakai mode-pantau');
+    r.assertEq(doc.getElementById('cardInputPenjualan').classList.contains('hidden'), true, 'panel input disembunyikan');
+    r.assertEq(doc.getElementById('cardKeranjang').classList.contains('hidden'), true, 'keranjang disembunyikan');
+    r.assertEq(doc.getElementById('lblCabang').textContent, 'Semua cabang (pemantau)', 'badge jujur');
+  });
+
+  r.test('kasir tetap mendapat panel jual dan badge cabangnya', () => {
+    const sk = loginSebagai('KASIR', 'CABANG-2');
+    const doc = sk.dom.window.document;
+
+    r.assertEq(doc.body.classList.contains('mode-pantau'), false, 'bukan mode pantau');
+    r.assertEq(doc.getElementById('cardInputPenjualan').classList.contains('hidden'), false, 'panel input tampil');
+    r.assertEq(doc.getElementById('lblCabang').textContent, 'Cabang CABANG-2', 'badge cabang kasir');
+  });
+
+  r.test('logout melepas mode pemantau', () => {
+    const sk = loginSebagai('PENGAWAS', '');
+
+    sk.app.call('logout');
+
+    r.assertEq(sk.dom.window.document.body.classList.contains('mode-pantau'), false, 'mode dilepas');
+    r.assertEq(
+      sk.dom.window.document.getElementById('cardInputPenjualan').classList.contains('hidden'),
+      false,
+      'panel input dipulihkan untuk login berikutnya'
+    );
+  });
+
+});
+
 r.run('frontend_login.test.js').then(ok => {
   process.exit(ok ? 0 : 1);
 });
