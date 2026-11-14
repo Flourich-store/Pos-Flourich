@@ -2217,6 +2217,22 @@
         </button>
       </div>
 
+      <!-- Stok per Cabang Card: pemantauan angka terakhir tiap cabang -->
+      <div class="card full-width-card hidden" id="cardStokCabang">
+        <div class="card-header-flex">
+          <h3><svg class="ic" aria-hidden="true"><use href="#icon-boxes-stacked"/></svg> Stok per Cabang</h3>
+          <select id="selCabangStok" onchange="renderStokCabang()" style="max-width: 220px;"
+            title="Pilih cabang untuk melihat stok terakhirnya"></select>
+        </div>
+        <div class="table-responsive overflow-x-auto w-full"
+          style="border-radius: var(--radius-md); overflow-x: auto;">
+          <table id="stokCabangTable" style="min-width: 360px;">
+            <thead id="theadStokCabang"></thead>
+            <tbody id="tbodyStokCabang"></tbody>
+          </table>
+        </div>
+      </div>
+
       <!-- Riwayat Penjualan Card -->
       <div class="card full-width-card">
         <h3><svg class="ic" aria-hidden="true"><use href="#icon-clock-rotate-left"/></svg> Riwayat Penjualan & Transaksi</h3>
@@ -2426,6 +2442,82 @@
         if (pantau) el.classList.add('hidden'); else el.classList.remove('hidden');
       }
       perbaruiBadgeCabang();
+      renderStokCabang();
+    }
+
+    // Siapa yang boleh melihat stok SEMUA cabang: pemantau & super admin.
+    function roleBolehPantauStok() {
+      const r = bacaRoleSesi();
+      return r === 'SUPER_ADMIN' || r === 'PENGAWAS';
+    }
+
+    /**
+     * Kartu "Stok per Cabang": dropdown pilih cabang + tabel produk.
+     *
+     * Sumber: payload stokCabangSemua (stok terakhir tiap cabang + total).
+     * Sel kosong ditampilkan "—" karena artinya BELUM DIISI di sheet, bukan 0.
+     * Kartu hanya tampil untuk role yang berhak memantau; kasir tetap fokus ke
+     * stok cabangnya sendiri.
+     */
+    function renderStokCabang() {
+      const card = document.getElementById('cardStokCabang');
+      if (!card || !card.classList) return;
+
+      const daftar = (stokSemuaCabang && Array.isArray(stokSemuaCabang.daftarCabang))
+        ? stokSemuaCabang.daftarCabang
+        : [];
+      const boleh = roleBolehPantauStok() && stokSemuaCabang && stokSemuaCabang.adaSheet && daftar.length > 0;
+      if (!boleh) { card.classList.add('hidden'); return; }
+      card.classList.remove('hidden');
+
+      const sel = document.getElementById('selCabangStok');
+      const pilihanLama = sel ? String(sel.value || '') : '';
+      if (sel) {
+        let opsi = '<option value="__semua">Semua cabang</option>';
+        for (let i = 0; i < daftar.length; i++) {
+          opsi += '<option value="' + daftar[i] + '">' + daftar[i] + '</option>';
+        }
+        sel.innerHTML = opsi;
+        const masihAda = pilihanLama === '__semua' || daftar.indexOf(pilihanLama) !== -1;
+        sel.value = masihAda ? pilihanLama : '__semua';
+      }
+
+      const pilihan = sel ? String(sel.value || '__semua') : '__semua';
+      const kolom = pilihan === '__semua' ? daftar : [pilihan];
+
+      const thead = document.getElementById('theadStokCabang');
+      const tbody = document.getElementById('tbodyStokCabang');
+      if (!thead || !tbody) return;
+
+      let htmlHead = '<tr><th style="text-align: left;">PRODUK</th>';
+      for (let i = 0; i < kolom.length; i++) {
+        htmlHead += '<th style="text-align: center;">' + kolom[i] + '</th>';
+      }
+      htmlHead += '<th style="text-align: center;">TOTAL</th></tr>';
+      thead.innerHTML = htmlHead;
+
+      const data = Array.isArray(dataProduk) ? dataProduk : [];
+      let htmlBody = '';
+      for (let i = 1; i < data.length; i++) {
+        const id = String(data[i][0] || '').trim();
+        if (!id) continue;
+        const nama = String(data[i][1] || '');
+        let baris = '<tr><td><span class="product-title">' + nama + '</span></td>';
+        for (let k = 0; k < kolom.length; k++) {
+          const petaCabang = (stokSemuaCabang.stok && stokSemuaCabang.stok[kolom[k]]) || {};
+          const angka = Object.prototype.hasOwnProperty.call(petaCabang, id) ? Number(petaCabang[id]) : null;
+          baris += '<td style="text-align: center;">' + (angka === null
+            ? '<span title="Belum diisi di sheet Stok_Cabang">—</span>'
+            : angka) + '</td>';
+        }
+        const total = Object.prototype.hasOwnProperty.call(stokSemuaCabang.total || {}, id)
+          ? Number(stokSemuaCabang.total[id])
+          : Number(data[i][2] || 0);
+        baris += '<td style="text-align: center;"><strong>' + total + '</strong></td></tr>';
+        htmlBody += baris;
+      }
+      tbody.innerHTML = htmlBody || ('<tr><td colspan="' + (kolom.length + 2) +
+        '" style="text-align: center;">Belum ada data stok.</td></tr>');
     }
 
     // Badge cabang di header: kasir harus tahu data & stok mana yang dilihatnya.
@@ -2796,6 +2888,8 @@
     // Stok per cabang dari server: { idProduk: angka }. Kosong = sheet/kolom
     // belum ada, dan UI memakai stok total.
     let stokCabangSesi = {};
+    // Stok SEMUA cabang (payload stokCabangSemua) untuk kartu "Stok per Cabang".
+    let stokSemuaCabang = { adaSheet: false, daftarCabang: [], stok: {}, total: {} };
     let filteredPenjualanData = [];
     let logoutTimer = null;
     let realtimeTimer = null;
@@ -3625,7 +3719,11 @@
       stokCabangSesi = (dataObj.stokCabang && dataObj.stokCabang.stok && typeof dataObj.stokCabang.stok === 'object')
         ? dataObj.stokCabang.stok
         : {};
+      stokSemuaCabang = (dataObj.stokCabangSemua && typeof dataObj.stokCabangSemua === 'object')
+        ? dataObj.stokCabangSemua
+        : { adaSheet: false, daftarCabang: [], stok: {}, total: {} };
       perbaruiBadgeCabang();
+      renderStokCabang();
 
       if (data.length > 1) {
         const sel = document.getElementById('selProduk');
@@ -3737,6 +3835,7 @@
         produk: result && Array.isArray(result.produk) ? result.produk : [],
         penjualan: result && Array.isArray(result.penjualan) ? result.penjualan : [],
         stokCabang: (result && result.stokCabang && typeof result.stokCabang === 'object') ? result.stokCabang : undefined,
+        stokCabangSemua: (result && result.stokCabangSemua && typeof result.stokCabangSemua === 'object') ? result.stokCabangSemua : undefined,
         cabang: (result && result.cabang) || '',
         timestamp: result && result.timestamp ? result.timestamp : new Date().getTime()
       };
@@ -3806,6 +3905,7 @@
           produk: result && Array.isArray(result.produk) ? result.produk : [],
           penjualan: result && Array.isArray(result.penjualan) ? result.penjualan : [],
           stokCabang: (result && result.stokCabang && typeof result.stokCabang === 'object') ? result.stokCabang : undefined,
+          stokCabangSemua: (result && result.stokCabangSemua && typeof result.stokCabangSemua === 'object') ? result.stokCabangSemua : undefined,
           cabang: (result && result.cabang) || '',
           timestamp: result && result.timestamp ? result.timestamp : new Date().getTime()
         };

@@ -250,4 +250,97 @@ r.suite('Stok per cabang di UI', () => {
 
 });
 
+// ════════════════════════════════════════════════════════════════
+// KARTU "STOK PER CABANG" (dropdown pemantau)
+// ════════════════════════════════════════════════════════════════
+
+r.suite('Stok per cabang — dropdown pemantauan', () => {
+
+  const PAYLOAD_SEMUA = {
+    produk: RESPON_VALID.produk,
+    penjualan: RESPON_VALID.penjualan,
+    stokCabang: { cabang: '', adaSheet: true, adaKolom: false, stok: {} },
+    stokCabangSemua: {
+      adaSheet: true,
+      daftarCabang: ['PUSAT', 'CABANG-2'],
+      stok: { 'PUSAT': { '1': 40, '2': 30 }, 'CABANG-2': { '1': 7 } },
+      total: { '1': 47, '2': 30 }
+    },
+    cabang: '',
+    timestamp: 1
+  };
+
+  function muat(role, payload) {
+    const dom = createDomStub();
+    const app = loadFrontend(dom, payload || PAYLOAD_SEMUA);
+    if (role) dom.sessionStorage.setItem('pos_role', role);
+    app.call('renderDataPaksa', payload || PAYLOAD_SEMUA);
+    return { dom, app };
+  }
+
+  r.test('pemantau melihat kartu dengan stok tiap cabang + total', () => {
+    const { dom } = muat('PENGAWAS');
+    const doc = dom.window.document;
+
+    r.assertEq(doc.getElementById('cardStokCabang').classList.contains('hidden'), false, 'kartu tampil');
+    const head = doc.getElementById('theadStokCabang').innerHTML;
+    r.assertIncludes(head, 'PUSAT', 'header memuat PUSAT');
+    r.assertIncludes(head, 'CABANG-2', 'header memuat CABANG-2');
+    r.assertIncludes(head, 'TOTAL', 'header memuat TOTAL');
+    const body = doc.getElementById('tbodyStokCabang').innerHTML;
+    r.assertIncludes(body, 'Semangci 250 ml', 'nama produk ikut');
+    r.assertIncludes(body, '47', 'total produk 1');
+    r.assertIncludes(body, '—', 'sel kosong ditandai, bukan 0');
+  });
+
+  r.test('dropdown memilih satu cabang -> hanya kolom cabang itu', () => {
+    const { dom, app } = muat('PENGAWAS');
+    const doc = dom.window.document;
+
+    doc.getElementById('selCabangStok').value = 'CABANG-2';
+    app.call('renderStokCabang');
+
+    const head = doc.getElementById('theadStokCabang').innerHTML;
+    r.assertIncludes(head, 'CABANG-2', 'kolom terpilih');
+    r.assertEq(head.indexOf('PUSAT'), -1, 'PUSAT tidak ikut');
+    const body = doc.getElementById('tbodyStokCabang').innerHTML;
+    r.assertIncludes(body, '7', 'stok CABANG-2 produk 1');
+  });
+
+  r.test('super admin juga boleh memantau', () => {
+    const { dom } = muat('SUPER_ADMIN');
+    r.assertEq(
+      dom.window.document.getElementById('cardStokCabang').classList.contains('hidden'),
+      false,
+      'kartu tampil'
+    );
+  });
+
+  r.test('kasir tidak melihat kartu stok semua cabang', () => {
+    const { dom } = muat('KASIR');
+    r.assertEq(
+      dom.window.document.getElementById('cardStokCabang').classList.contains('hidden'),
+      true,
+      'kartu disembunyikan'
+    );
+  });
+
+  r.test('payload lama/belum termigrasi -> kartu disembunyikan, tidak error', () => {
+    const { dom } = muat('PENGAWAS', {
+      produk: RESPON_VALID.produk,
+      penjualan: RESPON_VALID.penjualan,
+      stokCabang: { cabang: '', adaSheet: false, adaKolom: false, stok: {} },
+      cabang: '',
+      timestamp: 1
+    });
+
+    r.assertEq(
+      dom.window.document.getElementById('cardStokCabang').classList.contains('hidden'),
+      true,
+      'kartu disembunyikan'
+    );
+  });
+
+});
+
 r.run('Stok UI & sinkronisasi (stok manual)').then(ok => { process.exit(ok ? 0 : 1); });

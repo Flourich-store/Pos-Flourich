@@ -885,11 +885,17 @@ function getInitialData(limitPenjualan, cabang) {
   // sheet/kolom belum ada -> stok kosong, UI memakai stok total.
   const stokCabang = _stokCabangUntukPayload(ss, cabang);
 
+  // ─── 3b. STOK SEMUA CABANG ───
+  // Dipakai dropdown "Stok per Cabang" (pemantau/SUPER_ADMIN). Satu kali baca
+  // sheet yang sama, jadi tidak menambah roundtrip bagi kasir.
+  const stokCabangSemua = _stokSemuaCabangPayload(ss);
+
   // ─── 4. RETURN GABUNGAN ───
   return {
     produk: produkResult,
     penjualan: penjualanResult,
     stokCabang: stokCabang,
+    stokCabangSemua: stokCabangSemua,
     // Cabang yang dipakai menyaring payload ini. '' = tanpa filter (semua
     // baris), 'PUSAT' = semua baris juga, cabang lain = hanya barisnya sendiri.
     cabang: String(cabang || '').trim(),
@@ -2507,6 +2513,64 @@ function _stokCabangUntukPayload(ss, cabang) {
     if (teks === '') continue;
     const n = parseAngkaToleran(teks);
     if (Number.isFinite(n)) out.stok[id] = n;
+  }
+  return out;
+}
+
+/**
+ * Stok SEMUA cabang sekaligus — untuk pemantauan, bukan untuk transaksi.
+ *
+ * Kasir tetap memakai _stokCabangUntukPayload (satu cabang). Pemantau butuh
+ * melihat angka terakhir tiap cabang berdampingan, jadi dikirim satu paket:
+ *   { adaSheet, daftarCabang: ['PUSAT','CABANG-2'],
+ *     stok: { 'PUSAT': { id: n }, 'CABANG-2': { id: n } },
+ *     total: { id: jumlahSemuaKolom } }
+ *
+ * Nama cabang memakai teks header asli (bukan versi lowercase) supaya sama
+ * dengan kolom sheet dan mudah dicocokkan pemilik toko. Sel kosong tidak
+ * dikirim: "belum diisi" berbeda dari 0.
+ */
+function _stokSemuaCabangPayload(ss) {
+  const out = { adaSheet: false, daftarCabang: [], stok: {}, total: {} };
+
+  let sh = null;
+  try { sh = ss.getSheetByName(NAMA_SHEET_STOK_CABANG); } catch (e) { sh = null; }
+  if (!sh) return out;
+
+  const peta = _petaStokCabang(sh);
+  if (peta.idxId < 0) return out;
+  out.adaSheet = true;
+
+  const kunciCabang = Object.keys(peta.kolomCabang);
+  const namaTampil = {};
+  kunciCabang.forEach(function (kunci) {
+    const asli = String(peta.header[peta.kolomCabang[kunci]] == null ? '' : peta.header[peta.kolomCabang[kunci]]).trim();
+    namaTampil[kunci] = asli || kunci.toUpperCase();
+    out.stok[namaTampil[kunci]] = {};
+    out.daftarCabang.push(namaTampil[kunci]);
+  });
+
+  const lastRow = sh.getLastRow();
+  if (lastRow < 2) return out;
+
+  const lebar = Math.max(sh.getMaxColumns(), peta.idxId + 1);
+  const data = sh.getRange(2, 1, lastRow - 1, lebar).getValues();
+  for (const r of data) {
+    const id = String(r[peta.idxId] == null ? '' : r[peta.idxId]).trim();
+    if (!id) continue;
+    let jumlah = 0;
+    let adaNilai = false;
+    for (const kunci of kunciCabang) {
+      const sel = r[peta.kolomCabang[kunci]];
+      const teks = String(sel == null ? '' : sel).trim();
+      if (teks === '') continue;
+      const n = parseAngkaToleran(teks);
+      if (!Number.isFinite(n)) continue;
+      out.stok[namaTampil[kunci]][id] = n;
+      jumlah += n;
+      adaNilai = true;
+    }
+    if (adaNilai) out.total[id] = jumlah;
   }
   return out;
 }

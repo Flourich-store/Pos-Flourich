@@ -2802,6 +2802,40 @@ r.suite('Backend — stok cabang untuk tampilan', () => {
     r.assertEq(Object.keys(out.stokCabang.stok).length, 0, 'peta kosong');
   });
 
+  r.test('getInitialData mengirim stok SEMUA cabang + total (untuk dropdown pemantau)', () => {
+    const s = setupUi([
+      ['ID Produk', 'PUSAT', 'CABANG-2'],
+      ['1', 40, 7],
+      ['2', '', 3]
+    ]);
+
+    const out = s.backend.getInitialData(60, '');
+    const sc = out.stokCabangSemua;
+
+    r.assertEq(sc.adaSheet, true, 'sheet terdeteksi');
+    r.assertEq(sc.daftarCabang.join(','), 'PUSAT,CABANG-2', 'urutan kolom dipertahankan');
+    r.assertEq(sc.stok['PUSAT']['1'], 40, 'stok PUSAT produk 1');
+    r.assertEq(sc.stok['CABANG-2']['1'], 7, 'stok CABANG-2 produk 1');
+    r.assertEq(sc.stok['CABANG-2']['2'], 3, 'stok CABANG-2 produk 2');
+    r.assertEq(
+      Object.prototype.hasOwnProperty.call(sc.stok['PUSAT'], '2'),
+      false,
+      'sel kosong tidak dikirim sebagai 0'
+    );
+    r.assertEq(sc.total['1'], 47, 'total = 40 + 7');
+    r.assertEq(sc.total['2'], 3, 'total = 3');
+  });
+
+  r.test('tanpa sheet Stok_Cabang -> stokCabangSemua kosong, payload tetap jalan', () => {
+    const { backend } = setupUi(null);
+    const out = backend.getInitialData(60, '');
+
+    r.assertOk(out.stokCabangSemua, 'objek tetap dikirim');
+    r.assertEq(out.stokCabangSemua.adaSheet, false, 'adaSheet false');
+    r.assertEq(out.stokCabangSemua.daftarCabang.length, 0, 'tanpa kolom cabang');
+    r.assertOk(Array.isArray(out.produk), 'produk tetap terkirim');
+  });
+
 });
 
 // ════════════════════════════════════════════════════════════════
