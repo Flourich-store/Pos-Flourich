@@ -2397,19 +2397,20 @@ r.suite('Backend — stok per cabang (Fase 3)', () => {
   });
 
   r.test('checkout mengurangi kolom cabang transaksi, bukan cabang lain', () => {
+    // Kolom cabang sengaja diisi konsisten: 43 + 7 = 50 (total Produk).
     const { backend, spreadsheet, stokSheet } = setupStok([
       ['ID Produk', 'PUSAT', 'CABANG-2'],
-      ['1', 50, 7],
-      ['2', 30, 3]
+      ['1', 43, 7],
+      ['2', 27, 3]
     ]);
 
     const res = backend.prosesCheckout(CART, 'CASH', 50000, { username: 'kasir' });
 
     r.assertEq(res.status, 'success', 'checkout sukses');
     r.assertEq(stokSheet.getRange(2, 3).getValue(), 5, 'CABANG-2: 7 -> 5');
-    r.assertEq(stokSheet.getRange(2, 2).getValue(), 50, 'PUSAT tidak berubah');
+    r.assertEq(stokSheet.getRange(2, 2).getValue(), 43, 'PUSAT tidak berubah');
     r.assertEq(stokSheet.getRange(3, 3).getValue(), 3, 'produk lain tidak berubah');
-    r.assertEq(spreadsheet.__produk.__rows()[1][2], 48, 'Produk.Stok total 50 -> 48');
+    r.assertEq(spreadsheet.__produk.__rows()[1][2], 48, 'Produk.Stok = 43 + 5 = 48');
   });
 
   r.test('F-4: produk tidak punya baris di Stok_Cabang -> dilewati, transaksi tetap sukses', () => {
@@ -2441,29 +2442,29 @@ r.suite('Backend — stok per cabang (Fase 3)', () => {
   r.test('checkout tanpa identitas -> dicatat atas PUSAT, jadi stok PUSAT yang berkurang', () => {
     const { backend, spreadsheet, stokSheet } = setupStok([
       ['ID Produk', 'PUSAT', 'CABANG-2'],
-      ['1', 50, 7]
+      ['1', 43, 7]
     ]);
 
     const res = backend.prosesCheckout(CART, 'CASH', 50000);
 
     r.assertEq(res.status, 'success', 'checkout sukses');
     r.assertEq(spreadsheet.__penjualan.__rows()[1][13], 'PUSAT', 'baris dicatat atas PUSAT (Fase 1)');
-    r.assertEq(stokSheet.getRange(2, 2).getValue(), 48, 'stok PUSAT ikut berkurang, konsisten dengan barisnya');
+    r.assertEq(stokSheet.getRange(2, 2).getValue(), 41, 'stok PUSAT ikut berkurang, konsisten dengan barisnya');
     r.assertEq(stokSheet.getRange(2, 3).getValue(), 7, 'CABANG-2 tidak berubah');
-    r.assertEq(spreadsheet.__produk.__rows()[1][2], 48, 'Produk.Stok tetap berkurang');
+    r.assertEq(spreadsheet.__produk.__rows()[1][2], 48, 'Produk.Stok = 41 + 7 = 48');
   });
 
   r.test('tambah stok DENGAN cabang -> Produk.Stok & kolom cabang sama-sama naik', () => {
     const { backend, spreadsheet, stokSheet } = setupStok([
       ['ID Produk', 'PUSAT', 'CABANG-2'],
-      ['1', 50, 7]
+      ['1', 43, 7]
     ]);
 
     const pesan = backend.tambahStokProduk('1', 5, 'KASIR', 'CABANG-2');
 
-    r.assertEq(spreadsheet.__produk.__rows()[1][2], 55, 'Produk.Stok 50 -> 55');
+    r.assertEq(spreadsheet.__produk.__rows()[1][2], 55, 'Produk.Stok = 43 + 12 = 55');
     r.assertEq(stokSheet.getRange(2, 3).getValue(), 12, 'CABANG-2: 7 -> 12');
-    r.assertEq(stokSheet.getRange(2, 2).getValue(), 50, 'PUSAT tidak berubah');
+    r.assertEq(stokSheet.getRange(2, 2).getValue(), 43, 'PUSAT tidak berubah');
     r.assertOk(pesan.indexOf('5') !== -1, 'pesan menyebut jumlah');
   });
 
@@ -2492,14 +2493,125 @@ r.suite('Backend — stok per cabang (Fase 3)', () => {
   });
 
   r.test('header cabang tidak peka huruf besar/spasi', () => {
-    const { backend, stokSheet } = setupStok([
-      ['ID Produk', ' cabang-2 '],
-      ['1', 7]
+    const { backend, spreadsheet, stokSheet } = setupStok([
+      ['ID Produk', 'PUSAT', ' cabang-2 '],
+      ['1', 43, 7]
     ]);
 
     backend.prosesCheckout(CART, 'CASH', 50000, { username: 'kasir' });
 
-    r.assertEq(stokSheet.getRange(2, 2).getValue(), 5, 'kolom " cabang-2 " tetap dikenali');
+    r.assertEq(stokSheet.getRange(2, 3).getValue(), 5, 'kolom " cabang-2 " tetap dikenali');
+    r.assertEq(spreadsheet.__produk.__rows()[1][2], 48, 'total ikut jumlah cabang (43 + 5)');
+  });
+
+});
+
+// ════════════════════════════════════════════════════════════════
+// TOTAL STOK DERIVATIF (aturan F-7)
+//
+// Produk.Stok = JUMLAH seluruh kolom cabang di Stok_Cabang, dihitung ulang
+// setiap ada penjualan, tambah stok, atau sinkronisasi. Angka lama yang sudah
+// selisih pun ikut diperbaiki — bukan hanya dijaga tetap konsisten.
+// ════════════════════════════════════════════════════════════════
+
+r.suite('Backend — total stok dihitung dari jumlah cabang (F-7)', () => {
+
+  const H14 = [
+    'ID Transaksi', 'Tanggal', 'Nama Produk', 'Volume (ml)', 'HPP Satuan', 'Jumlah', 'Total Harga',
+    'Metode Pembayaran', 'Uang Dibayar', 'Uang Kembali', 'Modal', 'Biaya Operasional', 'Laba bersih', 'Cabang'
+  ];
+
+  const CART = [{ id: '1', nama: 'Semangci 250 ml', jumlah: 2, total: 30000 }];
+
+  function setup(peta) {
+    const s = setupBackend({
+      penjualanRows: [H14],
+      userRows: [['username', 'password', 'role', 'Cabang'], ['kasir', 'kasir123', 'KASIR', 'CABANG-2']]
+    });
+    const sh = s.spreadsheet.insertSheet('Stok_Cabang');
+    sh.getRange(1, 1, peta.length, peta[0].length).setValues(peta);
+    s.stokSheet = sh;
+    return s;
+  }
+
+  r.test('checkout: total mengikuti jumlah cabang, bukan sekadar dikurangi', () => {
+    // Sengaja selisih: 40 + 7 = 47, sedangkan Produk.Stok 50.
+    const { backend, spreadsheet, stokSheet } = setup([
+      ['ID Produk', 'PUSAT', 'CABANG-2'],
+      ['1', 40, 7]
+    ]);
+
+    backend.prosesCheckout(CART, 'CASH', 50000, { username: 'kasir' });
+
+    r.assertEq(stokSheet.getRange(2, 3).getValue(), 5, 'CABANG-2: 7 -> 5');
+    r.assertEq(spreadsheet.__produk.__rows()[1][2], 45, 'Produk.Stok = 40 + 5 = 45 (bukan 48)');
+  });
+
+  r.test('tambah stok: total ikut jumlah cabang walau sebelumnya selisih', () => {
+    const { backend, spreadsheet, stokSheet } = setup([
+      ['ID Produk', 'PUSAT', 'CABANG-2'],
+      ['1', 40, 7]
+    ]);
+
+    backend.tambahStokProduk('1', 5, 'KASIR', 'CABANG-2');
+
+    r.assertEq(stokSheet.getRange(2, 3).getValue(), 12, 'CABANG-2: 7 -> 12');
+    r.assertEq(spreadsheet.__produk.__rows()[1][2], 52, 'Produk.Stok = 40 + 12 = 52 (bukan 55)');
+  });
+
+  r.test('sinkron: baris baru ditambah DAN total lama yang selisih diperbaiki', () => {
+    const { backend, spreadsheet } = setup([
+      ['ID Produk', 'PUSAT', 'CABANG-2'],
+      ['1', 40, 7]
+    ]);
+
+    const out = backend.sinkronStokCabang();
+
+    r.assertEq(out.status, 'ok', 'sukses');
+    r.assertEq(out.ditambah, 1, 'produk 2 ditambahkan');
+    r.assertEq(out.totalDiselaraskan, 1, 'satu total diselaraskan');
+    r.assertIncludes(out.pesan, 'diselaraskan', 'pesan menyebut total');
+    r.assertEq(spreadsheet.__produk.__rows()[1][2], 47, 'produk 1: 50 -> 47 (40 + 7)');
+    r.assertEq(spreadsheet.__produk.__rows()[2][2], 30, 'produk 2 tanpa sel angka: total dibiarkan');
+  });
+
+  r.test('sinkron tanpa baris baru tetap memperbaiki total yang selisih', () => {
+    const { backend, spreadsheet } = setup([
+      ['ID Produk', 'PUSAT', 'CABANG-2'],
+      ['1', 40, 7],
+      ['2', 27, 3]
+    ]);
+
+    const out = backend.sinkronStokCabang();
+
+    r.assertEq(out.ditambah, 0, 'tidak ada baris baru');
+    r.assertEq(out.totalDiselaraskan, 1, 'hanya produk 1 yang selisih');
+    r.assertEq(spreadsheet.__produk.__rows()[1][2], 47, 'produk 1 diselaraskan');
+    r.assertEq(spreadsheet.__produk.__rows()[2][2], 30, 'produk 2 sudah cocok, tidak ditulis ulang');
+  });
+
+  r.test('semua sel cabang KOSONG -> total tidak dipaksa jadi 0', () => {
+    const { backend, spreadsheet, stokSheet } = setup([
+      ['ID Produk', 'PUSAT', 'CABANG-2'],
+      ['1', '', '']
+    ]);
+
+    backend.prosesCheckout(CART, 'CASH', 50000, { username: 'kasir' });
+
+    r.assertEq(stokSheet.getRange(2, 3).getValue(), '', 'sel tetap kosong');
+    r.assertEq(spreadsheet.__produk.__rows()[1][2], 48, 'Produk.Stok tetap berkurang seperti biasa');
+  });
+
+  r.test('sel berisi 0 dihitung sebagai angka (habis, bukan belum diisi)', () => {
+    const { backend, spreadsheet } = setup([
+      ['ID Produk', 'PUSAT', 'CABANG-2'],
+      ['1', 0, 0]
+    ]);
+
+    const out = backend.sinkronStokCabang();
+
+    r.assertEq(out.totalDiselaraskan, 1, 'produk 1 diselaraskan');
+    r.assertEq(spreadsheet.__produk.__rows()[1][2], 0, 'total = 0 + 0');
   });
 
 });

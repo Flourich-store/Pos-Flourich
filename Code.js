@@ -526,6 +526,12 @@ function tambahStokProdukInti(idProduk, qtyTambah, role, cabang) {
           catatanCabang = ' Sebagian stok cabang dilewati: ' + hasilCabang.dilewati.join('; ') + '.';
           Logger.log('tambahStokProduk: ' + catatanCabang);
         }
+
+        // F-7: stok cabang berubah -> Produk.Stok disegarkan jadi jumlah cabang.
+        if (hasilCabang.ok) {
+          const total = _sinkronTotalStokDariCabang(ss);
+          if (!total.ok) Logger.log('tambahStokProduk: total stok tidak dihitung ulang (' + total.alasan + ').');
+        }
       }
 
       // Cache payload baca tidak lagi valid (stok berubah di sheet).
@@ -1223,6 +1229,14 @@ function prosesCheckoutInti(cart, metode, uangDibayar, requestData) {
         Logger.log('prosesCheckout: stok cabang tidak diperbarui (' + stokCabang.alasan + ') — transaksi tetap tercatat.');
       } else if (stokCabang.dilewati.length) {
         Logger.log('prosesCheckout: sebagian stok cabang dilewati: ' + stokCabang.dilewati.join('; '));
+      }
+
+      // F-7: Produk.Stok = jumlah kolom cabang. Dihitung ulang HANYA bila kolom
+      // cabang transaksi memang berhasil diubah — kalau kolomnya belum ada,
+      // pengurangan Produk.Stok di atas tetap berlaku dan tidak dibatalkan.
+      if (stokCabang.ok) {
+        const total = _sinkronTotalStokDariCabang(ss);
+        if (!total.ok) Logger.log('prosesCheckout: total stok tidak dihitung ulang (' + total.alasan + ').');
       }
 
       // Cache payload baca dipakai ulang oleh login/refresh — tulis apa pun yang
@@ -2213,9 +2227,17 @@ function _cabangMelihatSemua(cabang) {
 //        Kosong berarti "belum diisi", bukan 0: menulis -qty di sana akan
 //        menciptakan angka negatif yang tidak pernah ada dasarnya.
 //  F-6  Sel berisi angka (termasuk 0)        -> diubah, boleh jadi negatif
-//        (stok kurang tetap informatif, sama seperti Produk.Stok).
+//        (stok kurang tetap informatif).
 // Semua F-1..F-5 hanya MENULIS LOG; checkout & tambah stok tidak pernah gagal
-// karena stok cabang belum siap. Produk.Stok tetap dianggap stok total.
+// karena stok cabang belum siap.
+//
+// F-7  TOTAL DERIVATIF: begitu kolom cabang tersedia, Produk.Stok BUKAN angka
+//      yang berdiri sendiri lagi — ia dihitung ulang sebagai JUMLAH seluruh
+//      kolom cabang (lihat _sinkronTotalStokDariCabang) setiap kali ada
+//      penjualan, tambah stok, atau sinkronisasi. Dengan begitu total dan
+//      rincian cabang tidak mungkin berselisih, dan pemilik toko cukup
+//      mengisi angka per cabang. Produk yang belum punya sel angka di
+//      Stok_Cabang dibiarkan apa adanya (belum diisi != 0).
 // ════════════════════════════════════════════════════════════════
 
 /** Peta header sheet Stok_Cabang: kolom ID produk + kolom tiap cabang. */
@@ -2313,6 +2335,96 @@ function _ubahStokCabang(ss, cabang, deltaPerId) {
 }
 
 /**
+ * Hitung ulang Produk.Stok sebagai JUMLAH seluruh kolom cabang di Stok_Cabang.
+ *
+ * Aturan F-7: total adalah turunan dari rincian cabang, bukan angka bebas.
+ * Dipanggil setelah setiap penulisan stok (checkout, tambah stok, sinkron).
+ *
+ * Fail-open seperti jalur stok cabang lainnya: sheet/kolom belum ada, sel
+ * kosong, atau produk tanpa baris TIDAK pernah membuat angka jadi 0 — produk
+ * seperti itu dilewati dan angkanya dibiarkan.
+ *
+ * @param {Object} [ss] spreadsheet (default: getSpreadsheet())
+ * @return {{ok: boolean, alasan: string, ditulis: number, dilewati: Array}}
+ *   ditulis   = jumlah baris Produk yang angkanya benar-benar diubah.
+ *   dilewati  = id produk yang tidak punya sel angka di Stok_Cabang.
+ */
+function _sinkronTotalStokDariCabang(ss) {
+  const hasil = { ok: false, alasan: '', ditulis: 0, dilewati: [] };
+
+  if (!ss) {
+    try { ss = getSpreadsheet(); } catch (e) { hasil.alasan = 'spreadsheet tidak bisa dibuka'; return hasil; }
+  }
+
+  let shStok = null;
+  try { shStok = ss.getSheetByName(NAMA_SHEET_STOK_CABANG); } catch (e) { shStok = null; }
+  if (!shStok) { hasil.alasan = 'sheet ' + NAMA_SHEET_STOK_CABANG + ' belum ada'; return hasil; }
+
+  const petaStok = _petaStokCabang(shStok);
+  if (petaStok.idxId < 0) { hasil.alasan = 'kolom "ID Produk" tidak ada di ' + NAMA_SHEET_STOK_CABANG; return hasil; }
+  const kolomCabang = Object.keys(petaStok.kolomCabang);
+  if (!kolomCabang.length) { hasil.alasan = 'belum ada kolom cabang di ' + NAMA_SHEET_STOK_CABANG; return hasil; }
+
+  const lastRowStok = shStok.getLastRow();
+  if (lastRowStok < 2) { hasil.alasan = NAMA_SHEET_STOK_CABANG + ' belum berisi data'; return hasil; }
+
+  const lebarStok = Math.max(shStok.getMaxColumns(), petaStok.idxId + 1);
+  const dataStok = shStok.getRange(2, 1, lastRowStok - 1, lebarStok).getValues();
+  const jumlahPerId = new Map();
+  for (const r of dataStok) {
+    const id = _normHeader(r[petaStok.idxId]);
+    if (!id) continue;
+    let jumlah = 0;
+    let adaNilai = false;
+    for (const nama of kolomCabang) {
+      const sel = r[petaStok.kolomCabang[nama]];
+      const teks = String(sel === null || sel === undefined ? '' : sel).trim();
+      if (teks === '') continue; // kosong = belum diisi, bukan 0
+      const n = parseAngkaToleran(teks);
+      if (!Number.isFinite(n)) continue;
+      jumlah += n;
+      adaNilai = true;
+    }
+    if (adaNilai) jumlahPerId.set(id, jumlah);
+  }
+  if (!jumlahPerId.size) { hasil.alasan = 'tidak ada sel stok cabang berisi angka'; return hasil; }
+
+  const shProduk = ss.getSheetByName('Produk');
+  if (!shProduk) { hasil.alasan = 'sheet Produk tidak ditemukan'; return hasil; }
+
+  const petaProduk = petaKolomProdukSheet(shProduk);
+  if (petaProduk.col.id === undefined || petaProduk.col.stok === undefined) {
+    hasil.alasan = 'header sheet Produk tidak punya kolom ID Produk/Stok';
+    return hasil;
+  }
+
+  const dataProduk = shProduk.getDataRange().getValues();
+  const tulis = [];
+  for (let i = 1; i < dataProduk.length; i++) {
+    const id = String(ambilKolom(dataProduk[i], petaProduk, 'id', '') || '').trim();
+    if (!id) continue;
+    const kunci = _normHeader(id);
+    if (!jumlahPerId.has(kunci)) { hasil.dilewati.push(id); continue; }
+    const target = jumlahPerId.get(kunci);
+    if (ambilKolomAngkaToleran(dataProduk[i], petaProduk, 'stok', 0) === target) continue;
+    tulis.push({ baris: i + 1, nilai: target });
+  }
+
+  let k = 0;
+  while (k < tulis.length) {
+    let m = k;
+    while (m + 1 < tulis.length && tulis[m + 1].baris === tulis[m].baris + 1) m++;
+    const bagian = tulis.slice(k, m + 1).map(t => [t.nilai]);
+    shProduk.getRange(tulis[k].baris, petaProduk.col.stok + 1, bagian.length, 1).setValues(bagian);
+    hasil.ditulis += bagian.length;
+    k = m + 1;
+  }
+
+  hasil.ok = true;
+  return hasil;
+}
+
+/**
  * Stok per cabang untuk satu konteks cabang, bentuk siap-pakai UI.
  *
  * @return {{cabang: string, adaSheet: boolean, adaKolom: boolean, stok: Object}}
@@ -2381,7 +2493,7 @@ function getStokCabang(cabang) {
  * @return {{status: string, pesan: string, ditambah: number, kandidat: Array}}
  */
 function sinkronStokCabang(hanyaSimulasi) {
-  const out = { status: 'batal', pesan: '', ditambah: 0, kandidat: [] };
+  const out = { status: 'batal', pesan: '', ditambah: 0, totalDiselaraskan: 0, kandidat: [] };
   const simulasi = hanyaSimulasi === true;
 
   try {
@@ -2432,6 +2544,18 @@ function sinkronStokCabang(hanyaSimulasi) {
     out.ditambah = 0;
 
     if (!kandidat.length) {
+      // F-7: tidak ada baris baru pun, total yang sudah selisih tetap disegarkan
+      // supaya Produk.Stok = jumlah kolom cabang.
+      const totalSaja = _sinkronTotalStokDariCabang(ss);
+      out.totalDiselaraskan = totalSaja.ok ? totalSaja.ditulis : 0;
+      if (out.totalDiselaraskan) {
+        buangCacheAwal();
+        out.status = 'ok';
+        out.pesan = 'Semua produk sudah punya baris di ' + NAMA_SHEET_STOK_CABANG +
+          '. Tidak ada baris yang ditulis, tetapi total stok ' + out.totalDiselaraskan +
+          ' produk diselaraskan dengan jumlah kolom cabang.';
+        return out;
+      }
       out.status = 'ok';
       out.pesan = 'Semua produk sudah punya baris di ' + NAMA_SHEET_STOK_CABANG + '. Tidak ada yang ditulis.';
       return out;
@@ -2453,11 +2577,18 @@ function sinkronStokCabang(hanyaSimulasi) {
       }
       return null;
     });
+
+    // F-7: baris baru belum berisi angka, tetapi produk lama bisa saja sudah
+    // selisih — total selalu disegarkan dari jumlah kolom cabang.
+    const totalSetelahSinkron = _sinkronTotalStokDariCabang(ss);
+    out.totalDiselaraskan = totalSetelahSinkron.ok ? totalSetelahSinkron.ditulis : 0;
+
     buangCacheAwal();
 
     out.status = 'ok';
     out.pesan = out.ditambah + ' produk ditambahkan ke ' + NAMA_SHEET_STOK_CABANG +
-      '. Stok per cabangnya masih KOSONG dan perlu diisi manual.';
+      '. Stok per cabangnya masih KOSONG dan perlu diisi manual.' +
+      (out.totalDiselaraskan ? ' Total stok ' + out.totalDiselaraskan + ' produk diselaraskan dengan jumlah kolom cabang.' : '');
   } catch (e) {
     out.status = 'error';
     out.pesan = 'Gagal menyinkronkan stok cabang: ' + (e && e.message ? e.message : String(e));
@@ -2468,9 +2599,10 @@ function sinkronStokCabang(hanyaSimulasi) {
 /**
  * Laporan READ-ONLY kesesuaian Produk.Stok dengan Stok_Cabang.
  *
- * Yang dilaporkan: produk tanpa baris di Stok_Cabang, sel kosong, dan selisih
- * antara Produk.Stok (total) dan jumlah seluruh kolom cabang. TIDAK menulis
- * apa pun — keputusan memperbaiki angka tetap milik pemilik toko.
+ * Sejak aturan F-7, Produk.Stok dihitung ulang sebagai jumlah kolom cabang pada
+ * setiap penulisan stok, jadi laporan ini berfungsi sebagai jaring pengaman:
+ * menangkap baris yang belum pernah disentuh (mis. angka diedit manual di sheet)
+ * dan produk yang belum punya baris di Stok_Cabang. TIDAK menulis apa pun.
  */
 function rekonsiliasiStokCabang() {
   const out = { status: 'ok', pesan: '', jumlahProduk: 0, tanpaBaris: [], selKosong: 0, selisih: [], totalStokProduk: 0, totalStokCabang: 0 };
