@@ -343,4 +343,53 @@ r.suite('Stok per cabang — dropdown pemantauan', () => {
 
 });
 
+// ════════════════════════════════════════════════════════════════
+// KOLOM CABANG DI RIWAYAT
+// ════════════════════════════════════════════════════════════════
+
+r.suite('Riwayat — kolom cabang', () => {
+
+  // baris penjualan 14 kolom (indeks 13 = cabang)
+  const BARIS_CABANG = ['FR-1', '14/11/2026 15:10', 'Semangci 500 ml', 500, 11000, 1, 20000, 'QRIS', 20000, 0, 11000, 0, 9000, 'CABANG-2'];
+  const BARIS_LAMA = ['FR-2', '01/09/2026 08:00', 'Semangci 250 ml', 250, 7500, 1, 10000, 'CASH', 10000, 0, 7500, 0, 2500, ''];
+
+  function muatRiwayat(penjualan) {
+    const dom = createDomStub();
+    const tbody = { innerHTML: '' };
+    dom.window.document.querySelector = (sel) => (sel === '#penjualanTable tbody'
+      ? tbody
+      : { innerHTML: '', classList: { contains: () => false, add() { }, remove() { } } });
+    const payload = {
+      produk: RESPON_VALID.produk,
+      penjualan: penjualan,
+      cabang: '',
+      timestamp: 1
+    };
+    const app = loadFrontend(dom, payload);
+    app.call('renderDataPaksa', payload);
+    return { dom, app, tbody };
+  }
+
+  r.test('setiap baris riwayat punya 14 sel, termasuk cabang transaksi', () => {
+    const { tbody } = muatRiwayat([RESPON_VALID.penjualan[0], BARIS_CABANG]);
+
+    r.assertEq((tbody.innerHTML.match(/<td/g) || []).length, 14, '14 kolom per baris');
+    r.assertIncludes(tbody.innerHTML, 'CABANG-2', 'nilai cabang tampil');
+  });
+
+  r.test('baris lama tanpa cabang ditandai "—", bukan dikarang PUSAT', () => {
+    const { tbody } = muatRiwayat([RESPON_VALID.penjualan[0], BARIS_LAMA]);
+
+    r.assertIncludes(tbody.innerHTML, '—', 'penanda kosong');
+    r.assertEq(tbody.innerHTML.indexOf('PUSAT'), -1, 'tidak menebak PUSAT');
+  });
+
+  r.test('tanpa riwayat -> colspan 14 (bukan 13) supaya tabel tetap rapi', () => {
+    const { tbody } = muatRiwayat([RESPON_VALID.penjualan[0]]);
+
+    r.assertIncludes(tbody.innerHTML, 'colspan="14"', 'colspan menyesuaikan jumlah kolom');
+  });
+
+});
+
 r.run('Stok UI & sinkronisasi (stok manual)').then(ok => { process.exit(ok ? 0 : 1); });

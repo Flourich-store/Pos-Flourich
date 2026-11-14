@@ -2281,6 +2281,7 @@
                   <th>Qty</th>
                   <th>Total Harga</th>
                   <th>Metode</th>
+                  <th>Cabang</th>
                   <th>Uang Dibayar</th>
                   <th>Uang Kembali</th>
                   <th>Modal</th>
@@ -2290,7 +2291,7 @@
               </thead>
               <tbody>
                 <tr>
-                  <td colspan="13" style="text-align:center; color:#94a3b8; padding: 24px;">Memuat riwayat penjualan...
+                  <td colspan="14" style="text-align:center; color:#94a3b8; padding: 24px;">Memuat riwayat penjualan...
                   </td>
                 </tr>
               </tbody>
@@ -4121,12 +4122,26 @@
       return 'Rp ' + Number(v).toLocaleString('id-ID');
     }
 
+    /**
+     * Sel kolom Cabang di tabel Riwayat.
+     *
+     * Baris lama (sebelum migrasi multi-cabang) tidak punya nilai cabang. Itu
+     * ditampilkan "—" supaya jujur: bukan PUSAT, hanya belum tercatat. Untuk
+     * pemantau yang melihat dua cabang sekaligus, kolom ini yang memisahkan
+     * transaksi per lokasi tanpa perlu membuka sheet.
+     */
+    function cabangRiwayat(row) {
+      const nilai = row && row[13] !== undefined && row[13] !== null ? String(row[13]).trim() : '';
+      if (!nilai) return '<span style="color:#94a3b8;">—</span>';
+      return '<b>' + nilai + '</b>';
+    }
+
     function renderPenjualanTable() {
       const tbodyJual = document.querySelector('#penjualanTable tbody');
       tbodyJual.innerHTML = '';
 
       if (filteredPenjualanData.length === 0) {
-        tbodyJual.innerHTML = '<tr><td colspan="13" style="text-align:center; color:#94a3b8; padding:20px;">Tidak ada riwayat penjualan yang sesuai</td></tr>';
+        tbodyJual.innerHTML = '<tr><td colspan="14" style="text-align:center; color:#94a3b8; padding:20px;">Tidak ada riwayat penjualan yang sesuai</td></tr>';
         updatePaginationControls(0);
         return;
       }
@@ -4153,6 +4168,7 @@
           <td>${row[5] || 0}</td>
           <td><b>Rp ${Number(row[6] || 0).toLocaleString('id-ID')}</b></td>
           <td><span class="${badgeClass}">${row[7] || '-'}</span></td>
+          <td>${cabangRiwayat(row)}</td>
           <td>Rp ${Number(row[8] || 0).toLocaleString('id-ID')}</td>
           <td>Rp ${Number(row[9] || 0).toLocaleString('id-ID')}</td>
           <td>${formatSelKosong(row, 10)}</td>

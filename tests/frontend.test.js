@@ -363,14 +363,15 @@ r.suite('Grup B — badge metode & label versi 13 kolom (v86)', () => {
     r.assertNotIncludes(html, 'badge badge-cash', 'tidak boleh badge-cash dari kolom Jumlah');
   });
 
-  r.test('seluruh <th> tabel = 13 kolom & sebaris dengan indeks payload', () => {
+  r.test('seluruh <th> tabel = 14 kolom & sebaris dengan indeks payload', () => {
     const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
     const th = html.match(/<th>[^<]*<\/th>/g) || [];
-    r.assertEq(th.length, 13, 'header tabel punya 13 <th>');
+    r.assertEq(th.length, 14, 'header tabel punya 14 <th> (13 data + Cabang)');
     const head = th.map(x => x.replace(/<\/?th>/g, '').trim());
     r.assertEq(head[7], 'Metode', 'kolom ke-8 = Metode (indeks badge)');
-    r.assertEq(head[10], 'Modal', 'kolom ke-11 = Modal');
-    r.assertEq(head[12], 'Laba Bersih', 'kolom ke-13 = Laba Bersih');
+    r.assertEq(head[8], 'Cabang', 'kolom ke-9 = Cabang (indeks payload 13)');
+    r.assertEq(head[11], 'Modal', 'kolom ke-12 = Modal');
+    r.assertEq(head[13], 'Laba Bersih', 'kolom ke-14 = Laba Bersih');
   });
 
   r.test('P5: sel Modal/Biaya/Laba kosong di Riwayat tampil "—", bukan "Rp 0"', () => {
