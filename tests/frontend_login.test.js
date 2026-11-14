@@ -454,7 +454,8 @@ r.suite('Login — mode pemantau (PENGAWAS)', () => {
     r.assertOk(doc.body.classList.contains('mode-pantau'), 'body memakai mode-pantau');
     r.assertEq(doc.getElementById('cardInputPenjualan').classList.contains('hidden'), true, 'panel input disembunyikan');
     r.assertEq(doc.getElementById('cardKeranjang').classList.contains('hidden'), true, 'keranjang disembunyikan');
-    r.assertEq(doc.getElementById('lblCabang').textContent, 'Semua cabang (pemantau)', 'badge jujur');
+    r.assertEq(doc.getElementById('lblCabang').textContent, 'Pemantau', 'badge pendek agar muat di HP');
+    r.assertIncludes(doc.getElementById('lblCabang').title, 'SEMUA cabang', 'konteks lengkap ada di tooltip');
   });
 
   r.test('kasir tetap mendapat panel jual dan badge cabangnya', () => {

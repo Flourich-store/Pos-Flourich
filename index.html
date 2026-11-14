@@ -1845,6 +1845,19 @@
       .receipt-actions .btn-receipt-action {
         flex: 1 1 45%;
       }
+
+      /* Kartu "Stok per Cabang": 45 kolom (PRODUK + PUSAT + CABANG-2 + TOTAL)
+         harus muat tanpa geser horizontal di 360-390px. Padding dirapatkan
+         hanya di tabel ini supaya kolom Total tetap terlihat. */
+      #stokCabangTable th,
+      #stokCabangTable td {
+        padding: 8px 6px;
+        font-size: 12px;
+      }
+
+      #stokCabangTable td .product-title {
+        font-size: 12px;
+      }
     }
 
     /* ==== v84: ikon SVG inline (pengganti FontAwesome) ==== */
@@ -2226,7 +2239,7 @@
         </div>
         <div class="table-responsive overflow-x-auto w-full"
           style="border-radius: var(--radius-md); overflow-x: auto;">
-          <table id="stokCabangTable" style="min-width: 360px;">
+          <table id="stokCabangTable" style="min-width: 0; width: 100%;">
             <thead id="theadStokCabang"></thead>
             <tbody id="tbodyStokCabang"></tbody>
           </table>
@@ -2540,8 +2553,11 @@
       const el = document.getElementById('lblCabang');
       if (!el) return;
       if (sesiPemantau()) {
-        el.textContent = 'Semua cabang (pemantau)';
-        el.title = 'Akun pemantau: membaca transaksi seluruh cabang, tidak dapat menjual atau mengubah stok';
+        // Label pendek: badge header hanya selebar ~120px di HP (flex 1 +
+        // ellipsis), sehingga "Semua cabang (pemantau)" terpotong. Konteks
+        // lengkapnya dipindah ke title + kartu "Stok per Cabang" di bawah.
+        el.textContent = 'Pemantau';
+        el.title = 'Akun pemantau: data & stok SEMUA cabang ditampilkan, tidak dapat menjual atau mengubah stok';
         return;
       }
       const cab = bacaCabangSesi();
