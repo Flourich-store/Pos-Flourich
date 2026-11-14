@@ -845,9 +845,10 @@ function getInitialData(limitPenjualan, cabang) {
 
       penjualanResult = [penjualanHeader];
 
-      // Filter cabang: PUSAT (dan pemanggil tanpa konteks) melihat semua baris,
-      // cabang lain hanya baris miliknya. Penyaringan dilakukan SEBELUM baris
-      // disusun, jadi payload yang di-cache sudah benar per cabang.
+      // Filter cabang: pemanggil TANPA konteks melihat semua baris (dipakai
+      // pemantau & pemanggil lama); setiap cabang — termasuk PUSAT — hanya
+      // melihat barisnya sendiri. Penyaringan dilakukan SEBELUM baris disusun,
+      // jadi payload yang di-cache sudah benar per cabang.
       const lihatSemua = _cabangMelihatSemua(cabang);
       const cabangDiminta = _normHeader(cabang);
 
@@ -2249,18 +2250,18 @@ function _roleUntukCheckout(shUser, requestData) {
  * Apakah konteks cabang ini melihat SEMUA baris penjualan.
  *
  * ATURAN:
- *  - ''        (tanpa konteks cabang) -> semua baris. Pemanggil lama (frontend
- *                yang belum mengirim cabang) tidak boleh kehilangan data.
- *  - 'PUSAT'   -> semua baris: pusat melihat seluruh cabang.
- *  - lainnya   -> hanya baris milik cabang itu.
+ *  - ''        (tanpa konteks cabang) -> semua baris. Ini konteks PEMANTAU
+ *                (role PENGAWAS) dan pemanggil lama yang belum mengirim cabang;
+ *                keduanya memang harus melihat seluruh cabang.
+ *  - PUSAT dan cabang lain -> hanya baris miliknya sendiri. Data transaksi
+ *                di cabang pusat TIDAK lagi otomatis memperlihatkan cabang
+ *                lain; pemantauan lintas cabang khusus role pemantau.
  *
- * Baris TANPA cabang tidak pernah dianggap PUSAT. Ia terlihat oleh PUSAT
- * karena PUSAT melihat semua baris, bukan karena dilabeli PUSAT; kasir cabang
- * lain tidak melihatnya sama sekali (baris itu memang belum diketahui cabangnya).
+ * Baris TANPA cabang tidak pernah dianggap PUSAT: hanya terlihat oleh konteks
+ * tanpa filter (pemantau), karena baris itu memang belum diketahui cabangnya.
  */
 function _cabangMelihatSemua(cabang) {
-  const c = _normHeader(cabang || '');
-  return c === '' || c === _normHeader(CABANG_AWAL_DEFAULT);
+  return _normHeader(cabang || '') === '';
 }
 
 // ════════════════════════════════════════════════════════════════

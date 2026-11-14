@@ -2237,11 +2237,10 @@ r.suite('Backend — cabang di payload & cache per cabang (Fase 2)', () => {
 // ════════════════════════════════════════════════════════════════
 // FILTER PER CABANG DI getInitialData
 //
-//  - PUSAT                -> semua baris (semua cabang)
-//  - tanpa konteks ('')   -> semua baris (pemanggil lama tidak kehilangan data)
-//  - cabang lain          -> hanya baris cabang itu
-//  - baris TANPA cabang   -> tidak dianggap PUSAT; hanya terlihat oleh PUSAT
-//                            karena PUSAT melihat semua baris
+//  - tanpa konteks ('')   -> semua baris (konteks pemantau & pemanggil lama)
+//  - PUSAT & cabang lain  -> hanya baris cabang itu sendiri
+//  - baris TANPA cabang   -> tidak dianggap PUSAT; hanya terlihat oleh konteks
+//                            tanpa filter (pemantau)
 // ════════════════════════════════════════════════════════════════
 
 r.suite('Backend — filter per cabang di getInitialData', () => {
@@ -2259,19 +2258,20 @@ r.suite('Backend — filter per cabang di getInitialData', () => {
         baris('FR-A1', 'CABANG-A'),
         baris('FR-B1', 'CABANG-B'),
         baris('FR-A2', 'CABANG-A'),
-        baris('FR-TANPA', '')
+        baris('FR-TANPA', ''),
+        baris('FR-P1', 'PUSAT')
       ]
     });
   }
 
   const idDari = (payload) => payload.penjualan.slice(1).map(row => row[0]).sort();
 
-  r.test('PUSAT melihat semua baris, termasuk yang belum berlabel cabang', () => {
+  r.test('PUSAT hanya melihat transaksi cabangnya sendiri', () => {
     const { backend } = setupFilter();
     const out = backend.getInitialData(60, 'PUSAT');
 
-    r.assertEq(out.penjualan.length, 5, 'header + 4 baris');
-    r.assertEq(idDari(out).join(','), 'FR-A1,FR-A2,FR-B1,FR-TANPA', 'semua ID terkirim');
+    r.assertEq(out.penjualan.length, 2, 'header + 1 baris PUSAT');
+    r.assertEq(idDari(out).join(','), 'FR-P1', 'hanya transaksi PUSAT');
     r.assertEq(out.cabang, 'PUSAT', 'konteks cabang dilaporkan');
   });
 
@@ -2284,25 +2284,24 @@ r.suite('Backend — filter per cabang di getInitialData', () => {
     for (const row of out.penjualan.slice(1)) r.assertEq(row[13], 'CABANG-A', 'setiap baris berlabel CABANG-A');
   });
 
-  r.test('baris TANPA cabang tidak dianggap PUSAT', () => {
+  r.test('baris TANPA cabang tidak dianggap PUSAT dan tidak ikut ke cabang mana pun', () => {
     const { backend } = setupFilter();
-    const pusat = backend.getInitialData(60, 'PUSAT');
-    const tanpaLabel = pusat.penjualan.filter(row => row[0] === 'FR-TANPA')[0];
+    const semua = backend.getInitialData(60);
+    const tanpaLabel = semua.penjualan.filter(row => row[0] === 'FR-TANPA')[0];
 
     r.assertEq(tanpaLabel[13], '', 'baris tetap tanpa cabang, tidak dilabeli ulang PUSAT');
-    // Dan kasir cabang lain tidak menerimanya sama sekali.
+    const pusat = backend.getInitialData(60, 'PUSAT');
+    r.assertOk(pusat.penjualan.every(row => row[0] !== 'FR-TANPA'), 'PUSAT tidak menerima baris tanpa cabang');
     const a = backend.getInitialData(60, 'CABANG-A');
     r.assertOk(a.penjualan.every(row => row[0] !== 'FR-TANPA'), 'cabang A tidak melihat baris tanpa cabang');
-    // Cabang bernama PUSAT pun bukan "keranjang sampah" untuk baris kosong:
-    // ia melihatnya karena melihat semua, dan labelnya tetap kosong.
-    r.assertEq(tanpaLabel[13] !== 'PUSAT', true, 'label kosong tidak berubah jadi PUSAT');
   });
 
-  r.test('tanpa konteks cabang -> semua baris (pemanggil lama aman)', () => {
+  r.test('tanpa konteks cabang -> semua baris (konteks pemantau aman)', () => {
     const { backend } = setupFilter();
     const out = backend.getInitialData(60);
 
-    r.assertEq(out.penjualan.length, 5, 'tidak ada data yang disembunyikan');
+    r.assertEq(out.penjualan.length, 6, 'tidak ada data yang disembunyikan');
+    r.assertEq(idDari(out).join(','), 'FR-A1,FR-A2,FR-B1,FR-P1,FR-TANPA', 'seluruh ID terkirim');
     r.assertEq(out.cabang, '', 'konteks kosong dilaporkan apa adanya');
   });
 
