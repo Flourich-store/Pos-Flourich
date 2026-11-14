@@ -307,12 +307,12 @@ r.suite('Stok per cabang — dropdown pemantauan', () => {
     r.assertIncludes(body, '7', 'stok CABANG-2 produk 1');
   });
 
-  r.test('super admin juga boleh memantau', () => {
+  r.test('super admin TIDAK melihat kartu (khusus pemantau)', () => {
     const { dom } = muat('SUPER_ADMIN');
     r.assertEq(
       dom.window.document.getElementById('cardStokCabang').classList.contains('hidden'),
-      false,
-      'kartu tampil'
+      true,
+      'kartu disembunyikan untuk super admin'
     );
   });
 
