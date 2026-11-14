@@ -392,4 +392,87 @@ r.suite('Riwayat — kolom cabang', () => {
 
 });
 
+// ════════════════════════════════════════════════════════════════
+// FILTER CABANG DI RIWAYAT (khusus pemantau)
+// ════════════════════════════════════════════════════════════════
+
+r.suite('Riwayat — dropdown filter cabang untuk pemantau', () => {
+
+  const HDR = ['id', 'tanggal', 'namaProduk', 'volumeMl', 'hppSatuan', 'jumlah', 'totalHarga',
+    'metode', 'uangDibayar', 'uangKembali', 'modal', 'biayaOperasional', 'labaBersih', 'cabang'];
+  const ROW_PUSAT = ['FR-PUSAT', '14/11/2026 10:00', 'Semangci 250 ml', 250, 7500, 1, 10000, 'CASH', 10000, 0, 7500, 0, 2500, 'PUSAT'];
+  const ROW_CAB2 = ['FR-CAB2', '14/11/2026 15:10', 'Semangci 500 ml', 500, 11000, 1, 20000, 'QRIS', 20000, 0, 11000, 0, 9000, 'CABANG-2'];
+
+  const PAYLOAD = {
+    produk: RESPON_VALID.produk,
+    penjualan: [HDR, ROW_PUSAT, ROW_CAB2],
+    stokCabang: { cabang: '', adaSheet: true, adaKolom: false, stok: {} },
+    stokCabangSemua: {
+      adaSheet: true,
+      daftarCabang: ['PUSAT', 'CABANG-2'],
+      stok: { 'PUSAT': {}, 'CABANG-2': {} },
+      total: {}
+    },
+    cabang: '',
+    timestamp: 1
+  };
+
+  function muat(role) {
+    const dom = createDomStub();
+    const tbody = { innerHTML: '' };
+    dom.window.document.querySelector = (sel) => (sel === '#penjualanTable tbody' ? tbody : { innerHTML: '' });
+    if (role) dom.sessionStorage.setItem('pos_role', role);
+    const app = loadFrontend(dom, PAYLOAD);
+    app.call('renderDataPaksa', PAYLOAD);
+    return { dom, app, tbody };
+  }
+
+  r.test('pemantau melihat dropdown cabang berisi cabang yang ada', () => {
+    const { dom } = muat('PENGAWAS');
+    const doc = dom.window.document;
+
+    r.assertEq(doc.getElementById('filterCabangGroup').classList.contains('hidden'), false, 'grup filter tampil');
+    const opsi = doc.getElementById('filterCabang').innerHTML;
+    r.assertIncludes(opsi, 'PUSAT', 'opsi PUSAT');
+    r.assertIncludes(opsi, 'CABANG-2', 'opsi CABANG-2');
+  });
+
+  r.test('memilih satu cabang menyaring riwayat ke cabang itu saja', () => {
+    const { dom, app, tbody } = muat('PENGAWAS');
+    const doc = dom.window.document;
+
+    r.assertIncludes(tbody.innerHTML, 'FR-PUSAT', 'sebelum filter: dua cabang');
+    r.assertIncludes(tbody.innerHTML, 'FR-CAB2', 'sebelum filter: dua cabang');
+
+    doc.getElementById('filterCabang').value = 'CABANG-2';
+    app.call('applyFilter', true);
+
+    r.assertIncludes(tbody.innerHTML, 'FR-CAB2', 'transaksi CABANG-2 tetap');
+    r.assertEq(tbody.innerHTML.indexOf('FR-PUSAT'), -1, 'transaksi PUSAT tersaring');
+  });
+
+  r.test('Reset mengembalikan filter ke semua cabang', () => {
+    const { dom, app, tbody } = muat('PENGAWAS');
+    const doc = dom.window.document;
+
+    doc.getElementById('filterCabang').value = 'CABANG-2';
+    app.call('applyFilter', true);
+    app.call('resetFilter');
+
+    r.assertEq(doc.getElementById('filterCabang').value, '', 'dropdown kembali ke semua cabang');
+    r.assertIncludes(tbody.innerHTML, 'FR-PUSAT', 'riwayat kedua cabang kembali');
+  });
+
+  r.test('kasir tidak melihat dropdown cabang', () => {
+    const { dom } = muat('KASIR');
+
+    r.assertEq(
+      dom.window.document.getElementById('filterCabangGroup').classList.contains('hidden'),
+      true,
+      'grup filter disembunyikan'
+    );
+  });
+
+});
+
 r.run('Stok UI & sinkronisasi (stok manual)').then(ok => { process.exit(ok ? 0 : 1); });

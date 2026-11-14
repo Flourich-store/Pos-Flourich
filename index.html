@@ -2254,6 +2254,14 @@
               <option value="QRIS">QRIS / Transfer Bank</option>
             </select>
           </div>
+          <!-- Filter cabang: hanya tampil untuk peran pemantau (PENGAWAS),
+               yang memang membaca transaksi dari kedua cabang sekaligus. -->
+          <div class="filter-group hidden" id="filterCabangGroup">
+            <label>Cabang</label>
+            <select id="filterCabang" onchange="applyFilter(true)">
+              <option value="">Semua cabang</option>
+            </select>
+          </div>
           <div class="filter-group">
             <label>Pencarian</label>
             <input type="text" id="filterSearch" placeholder="Cari ID atau Produk...">
@@ -2444,6 +2452,10 @@
       }
       perbaruiBadgeCabang();
       renderStokCabang();
+      try {
+        siapkanFilterCabang();
+        applyFilter(true);
+      } catch (e) { }
     }
 
     // Siapa yang boleh melihat stok SEMUA cabang: pemantau & super admin.
@@ -3794,6 +3806,7 @@
       if (!Array.isArray(filteredPenjualanData)) filteredPenjualanData = [];
 
       rawPenjualanData = dataJual;
+      siapkanFilterCabang();
       applyFilter(false);
       toggleUangInput();
     }
@@ -4026,6 +4039,12 @@
       const metodeInput = metodeInputElem ? metodeInputElem.value : '';
       const searchInputElem = document.getElementById('filterSearch');
       const searchInput = searchInputElem ? searchInputElem.value.toLowerCase() : '';
+      // Filter cabang hanya berlaku untuk pemantau: kasir sudah terkunci ke
+      // cabangnya di server, jadi dropdown ini tidak ditampilkan untuk mereka.
+      const cabangInputElem = document.getElementById('filterCabang');
+      const cabangInput = (sesiPemantau() && cabangInputElem)
+        ? String(cabangInputElem.value || '').trim()
+        : '';
 
       if (rawPenjualanData.length <= 1) {
         filteredPenjualanData = [];
@@ -4092,7 +4111,13 @@
           }
         }
 
-        return isValidDate && isValidMetode && isValidSearch;
+        let isValidCabang = true;
+        if (cabangInput) {
+          const rowCabang = String(row[13] === undefined || row[13] === null ? '' : row[13]).trim();
+          if (rowCabang.toUpperCase() !== cabangInput.toUpperCase()) isValidCabang = false;
+        }
+
+        return isValidDate && isValidMetode && isValidSearch && isValidCabang;
       });
 
       if (resetPage) currentPage = 1;
@@ -4106,7 +4131,50 @@
       if (metodeInputElem) metodeInputElem.value = '';
       const searchInputElem = document.getElementById('filterSearch');
       if (searchInputElem) searchInputElem.value = '';
+      const cabangInputElem = document.getElementById('filterCabang');
+      if (cabangInputElem) cabangInputElem.value = '';
       applyFilter(true);
+    }
+
+    /**
+     * Dropdown "Cabang" pada filter Riwayat — KHUSUS peran pemantau.
+     *
+     * Pilihan diambil dari dua sumber: daftar kolom di sheet Stok_Cabang
+     * (supaya cabang yang stoknya kosong tetap bisa dipilih) dan nilai cabang
+     * yang benar-benar ada di riwayat yang dimuat. Nilai lama dipertahankan
+     * selama masih valid, jadi refresh 10 detik tidak mengembalikan filter ke
+     * "Semua cabang" saat pemantau sedang memilah satu cabang.
+     */
+    function siapkanFilterCabang() {
+      const grup = document.getElementById('filterCabangGroup');
+      const sel = document.getElementById('filterCabang');
+      if (!grup || !sel) return;
+
+      if (!sesiPemantau()) {
+        grup.classList.add('hidden');
+        sel.value = '';
+        return;
+      }
+      grup.classList.remove('hidden');
+
+      const pilihanLama = String(sel.value || '').trim();
+      const daftar = [];
+      const tambah = function (nama) {
+        const n = String(nama === undefined || nama === null ? '' : nama).trim();
+        if (n && daftar.indexOf(n) === -1) daftar.push(n);
+      };
+      if (stokSemuaCabang && Array.isArray(stokSemuaCabang.daftarCabang)) {
+        stokSemuaCabang.daftarCabang.forEach(tambah);
+      }
+      const rows = Array.isArray(rawPenjualanData) ? rawPenjualanData.slice(1) : [];
+      rows.forEach(function (row) { tambah(row && row[13]); });
+
+      let opsi = '<option value="">Semua cabang</option>';
+      for (let i = 0; i < daftar.length; i++) {
+        opsi += '<option value="' + daftar[i] + '">' + daftar[i] + '</option>';
+      }
+      sel.innerHTML = opsi;
+      sel.value = daftar.indexOf(pilihanLama) !== -1 ? pilihanLama : '';
     }
 
     /**
