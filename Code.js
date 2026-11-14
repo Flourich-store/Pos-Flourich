@@ -874,10 +874,16 @@ function getInitialData(limitPenjualan, cabang) {
     }
   }
 
-  // ─── 3. RETURN GABUNGAN ───
+  // ─── 3. STOK PER CABANG ───
+  // Dikirim bersama payload supaya UI tidak perlu request kedua. Fail-open:
+  // sheet/kolom belum ada -> stok kosong, UI memakai stok total.
+  const stokCabang = _stokCabangUntukPayload(ss, cabang);
+
+  // ─── 4. RETURN GABUNGAN ───
   return {
     produk: produkResult,
     penjualan: penjualanResult,
+    stokCabang: stokCabang,
     // Cabang yang dipakai menyaring payload ini. '' = tanpa filter (semua
     // baris), 'PUSAT' = semua baris juga, cabang lain = hanya barisnya sendiri.
     cabang: String(cabang || '').trim(),
@@ -2304,6 +2310,247 @@ function _ubahStokCabang(ss, cabang, deltaPerId) {
 
   hasil.ok = true;
   return hasil;
+}
+
+/**
+ * Stok per cabang untuk satu konteks cabang, bentuk siap-pakai UI.
+ *
+ * @return {{cabang: string, adaSheet: boolean, adaKolom: boolean, stok: Object}}
+ *   stok = { idProduk: angka } — HANYA sel yang benar-benar berisi angka.
+ *   Sel kosong sengaja tidak dimasukkan (aturan F-5: kosong = belum diisi,
+ *   bukan 0), sehingga UI bisa membedakan "stok cabang 0" dari "belum diisi".
+ */
+function _stokCabangUntukPayload(ss, cabang) {
+  const out = { cabang: String(cabang || '').trim(), adaSheet: false, adaKolom: false, stok: {} };
+  const c = _normHeader(cabang || '');
+  if (!c) return out;
+
+  let sh = null;
+  try { sh = ss.getSheetByName(NAMA_SHEET_STOK_CABANG); } catch (e) { sh = null; }
+  if (!sh) return out;
+  out.adaSheet = true;
+
+  const peta = _petaStokCabang(sh);
+  if (peta.idxId < 0) return out;
+  const idxKolom = peta.kolomCabang[c];
+  if (idxKolom === undefined) return out;
+  out.adaKolom = true;
+
+  const lastRow = sh.getLastRow();
+  if (lastRow < 2) return out;
+
+  const lebar = Math.max(sh.getMaxColumns(), peta.idxId + 1, idxKolom + 1);
+  const data = sh.getRange(2, 1, lastRow - 1, lebar).getValues();
+  for (const r of data) {
+    const id = String(r[peta.idxId] === null || r[peta.idxId] === undefined ? '' : r[peta.idxId]).trim();
+    if (!id) continue;
+    const mentah = r[idxKolom];
+    const teks = String(mentah === null || mentah === undefined ? '' : mentah).trim();
+    if (teks === '') continue;
+    const n = parseAngkaToleran(teks);
+    if (Number.isFinite(n)) out.stok[id] = n;
+  }
+  return out;
+}
+
+/** Aksi baca untuk UI/ops: stok satu cabang saja. READ-ONLY. */
+function getStokCabang(cabang) {
+  const out = _stokCabangUntukPayload(getSpreadsheet(), cabang);
+  out.status = 'ok';
+  if (!out.cabang) {
+    out.status = 'batal';
+    out.pesan = 'Sebutkan cabang, mis. getStokCabang("PUSAT").';
+  } else if (!out.adaSheet) {
+    out.status = 'batal';
+    out.pesan = 'Sheet ' + NAMA_SHEET_STOK_CABANG + ' belum ada.';
+  } else if (!out.adaKolom) {
+    out.status = 'batal';
+    out.pesan = 'Kolom cabang "' + out.cabang + '" belum ada di ' + NAMA_SHEET_STOK_CABANG + '.';
+  }
+  return out;
+}
+
+/**
+ * Sinkronkan daftar produk ke sheet Stok_Cabang (tambahkan baris yang belum ada).
+ *
+ * Sel stok dibiarkan KOSONG, bukan 0: sama seperti aturan F-5, kosong berarti
+ * "belum diisi", dan checkout tidak akan mengarang angka minus dari situ.
+ * Idempoten: produk yang sudah punya baris tidak disentuh, jadi aman dijalankan
+ * berkali-kali. hanyaSimulasi = true -> hanya melaporkan rencana, tanpa menulis.
+ *
+ * @return {{status: string, pesan: string, ditambah: number, kandidat: Array}}
+ */
+function sinkronStokCabang(hanyaSimulasi) {
+  const out = { status: 'batal', pesan: '', ditambah: 0, kandidat: [] };
+  const simulasi = hanyaSimulasi === true;
+
+  try {
+    const ss = getSpreadsheet();
+    const shProduk = ss.getSheetByName('Produk');
+    if (!shProduk) { out.pesan = 'Sheet Produk tidak ditemukan.'; return out; }
+
+    const shStok = ss.getSheetByName(NAMA_SHEET_STOK_CABANG);
+    if (!shStok) {
+      out.pesan = 'Sheet ' + NAMA_SHEET_STOK_CABANG + ' belum ada — jalankan migrasi multi-cabang lebih dulu.';
+      return out;
+    }
+
+    const peta = _petaStokCabang(shStok);
+    if (peta.idxId < 0) {
+      out.pesan = 'Kolom "ID Produk" tidak ada di ' + NAMA_SHEET_STOK_CABANG + '.';
+      return out;
+    }
+
+    const petaProduk = petaKolomProdukSheet(shProduk);
+    if (petaProduk.col.id === undefined) {
+      out.pesan = 'Header sheet Produk tidak punya kolom "ID Produk".';
+      return out;
+    }
+
+    const dataProduk = shProduk.getDataRange().getValues();
+    const sudahAda = new Set();
+    const lastRowStok = shStok.getLastRow();
+    if (lastRowStok >= 2) {
+      const lebarStok = Math.max(shStok.getMaxColumns(), peta.idxId + 1);
+      const dataStok = shStok.getRange(2, 1, lastRowStok - 1, lebarStok).getValues();
+      for (const r of dataStok) {
+        const id = _normHeader(r[peta.idxId]);
+        if (id) sudahAda.add(id);
+      }
+    }
+
+    const kandidat = [];
+    for (let i = 1; i < dataProduk.length; i++) {
+      const id = String(ambilKolom(dataProduk[i], petaProduk, 'id', '') || '').trim();
+      if (!id) continue;
+      if (sudahAda.has(_normHeader(id))) continue;
+      kandidat.push({ id: id, nama: String(ambilKolom(dataProduk[i], petaProduk, 'nama', '') || '') });
+      sudahAda.add(_normHeader(id)); // cegah duplikat di dalam file Produk
+    }
+
+    out.kandidat = kandidat;
+    out.ditambah = 0;
+
+    if (!kandidat.length) {
+      out.status = 'ok';
+      out.pesan = 'Semua produk sudah punya baris di ' + NAMA_SHEET_STOK_CABANG + '. Tidak ada yang ditulis.';
+      return out;
+    }
+
+    if (simulasi) {
+      out.status = 'simulasi';
+      out.pesan = 'Simulasi: ' + kandidat.length + ' produk akan ditambahkan (sel stok dibiarkan kosong).';
+      return out;
+    }
+
+    denganKunciTulis(function () {
+      let baris = shStok.getLastRow() + 1;
+      if (baris < 2) baris = 2;
+      for (const k of kandidat) {
+        shStok.getRange(baris, peta.idxId + 1).setValue(k.id);
+        baris++;
+        out.ditambah++;
+      }
+      return null;
+    });
+    buangCacheAwal();
+
+    out.status = 'ok';
+    out.pesan = out.ditambah + ' produk ditambahkan ke ' + NAMA_SHEET_STOK_CABANG +
+      '. Stok per cabangnya masih KOSONG dan perlu diisi manual.';
+  } catch (e) {
+    out.status = 'error';
+    out.pesan = 'Gagal menyinkronkan stok cabang: ' + (e && e.message ? e.message : String(e));
+  }
+  return out;
+}
+
+/**
+ * Laporan READ-ONLY kesesuaian Produk.Stok dengan Stok_Cabang.
+ *
+ * Yang dilaporkan: produk tanpa baris di Stok_Cabang, sel kosong, dan selisih
+ * antara Produk.Stok (total) dan jumlah seluruh kolom cabang. TIDAK menulis
+ * apa pun — keputusan memperbaiki angka tetap milik pemilik toko.
+ */
+function rekonsiliasiStokCabang() {
+  const out = { status: 'ok', pesan: '', jumlahProduk: 0, tanpaBaris: [], selKosong: 0, selisih: [], totalStokProduk: 0, totalStokCabang: 0 };
+
+  try {
+    const ss = getSpreadsheet();
+    const shProduk = ss.getSheetByName('Produk');
+    const shStok = ss.getSheetByName(NAMA_SHEET_STOK_CABANG);
+
+    if (!shProduk) { out.status = 'error'; out.pesan = 'Sheet Produk tidak ditemukan.'; return out; }
+    if (!shStok) {
+      out.status = 'batal';
+      out.pesan = 'Sheet ' + NAMA_SHEET_STOK_CABANG + ' belum ada — belum ada yang bisa direkonsiliasi.';
+      return out;
+    }
+
+    const petaStok = _petaStokCabang(shStok);
+    if (petaStok.idxId < 0) {
+      out.status = 'error';
+      out.pesan = 'Kolom "ID Produk" tidak ada di ' + NAMA_SHEET_STOK_CABANG + '.';
+      return out;
+    }
+
+    const petaProduk = petaKolomProdukSheet(shProduk);
+    if (petaProduk.col.id === undefined) {
+      out.status = 'error';
+      out.pesan = 'Header sheet Produk tidak punya kolom "ID Produk".';
+      return out;
+    }
+
+    const kolomCabang = Object.keys(petaStok.kolomCabang);
+
+    const stokPerId = new Map();
+    const lastRowStok = shStok.getLastRow();
+    if (lastRowStok >= 2) {
+      const lebar = Math.max(shStok.getMaxColumns(), petaStok.idxId + 1);
+      const dataStok = shStok.getRange(2, 1, lastRowStok - 1, lebar).getValues();
+      for (const r of dataStok) {
+        const id = _normHeader(r[petaStok.idxId]);
+        if (!id) continue;
+        let jumlah = 0;
+        let adaNilai = false;
+        for (const nama of kolomCabang) {
+          const sel = r[petaStok.kolomCabang[nama]];
+          const teks = String(sel === null || sel === undefined ? '' : sel).trim();
+          if (teks === '') { out.selKosong++; continue; }
+          const n = parseAngkaToleran(teks);
+          if (!Number.isFinite(n)) continue;
+          jumlah += n;
+          adaNilai = true;
+        }
+        stokPerId.set(id, { jumlah: jumlah, adaNilai: adaNilai });
+      }
+    }
+
+    const dataProduk = shProduk.getDataRange().getValues();
+    for (let i = 1; i < dataProduk.length; i++) {
+      const id = String(ambilKolom(dataProduk[i], petaProduk, 'id', '') || '').trim();
+      if (!id) continue;
+      out.jumlahProduk++;
+      const totalProduk = ambilKolomAngkaToleran(dataProduk[i], petaProduk, 'stok', 0);
+      out.totalStokProduk += totalProduk;
+
+      const entri = stokPerId.get(_normHeader(id));
+      if (!entri) { out.tanpaBaris.push(id); continue; }
+      out.totalStokCabang += entri.jumlah;
+      if (!entri.adaNilai) continue; // semua sel kosong: bukan selisih, hanya belum diisi
+      if (entri.jumlah !== totalProduk) {
+        out.selisih.push({ id: id, produk: totalProduk, cabang: entri.jumlah, beda: entri.jumlah - totalProduk });
+      }
+    }
+
+    out.jumlahCabang = kolomCabang.length;
+    out.pesan = 'Diperiksa ' + out.jumlahProduk + ' produk, ' + kolomCabang.length + ' kolom cabang. ' +
+      out.tanpaBaris.length + ' tanpa baris, ' + out.selisih.length + ' berselisih, ' + out.selKosong + ' sel kosong.';
+  } catch (e) {
+    out.status = 'error';
+    out.pesan = 'Gagal merekonsiliasi stok cabang: ' + (e && e.message ? e.message : String(e));
+  }
+  return out;
 }
 
 function petaKolomProdukSheet(sh) {

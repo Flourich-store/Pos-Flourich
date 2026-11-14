@@ -2504,4 +2504,192 @@ r.suite('Backend — stok per cabang (Fase 3)', () => {
 
 });
 
+// ════════════════════════════════════════════════════════════════
+// OPERATOR STOK CABANG — FASE 3b
+//
+// sinkronStokCabang()  : tambahkan baris produk baru (sel stok KOSONG, bukan 0)
+// rekonsiliasiStokCabang(): laporan READ-ONLY Produk.Stok vs jumlah cabang
+// ════════════════════════════════════════════════════════════════
+
+r.suite('Backend — sinkron & rekonsiliasi stok cabang (Fase 3b)', () => {
+
+  function setupOperator(stokCabang) {
+    const s = setupBackend({});
+    if (stokCabang) {
+      const sh = s.spreadsheet.insertSheet('Stok_Cabang');
+      sh.getRange(1, 1, stokCabang.length, stokCabang[0].length).setValues(stokCabang);
+      s.stokSheet = sh;
+    }
+    return s;
+  }
+
+  r.test('sinkron tanpa sheet Stok_Cabang -> batal dengan pesan migrasi', () => {
+    const { backend } = setupOperator(null);
+
+    const out = backend.sinkronStokCabang();
+
+    r.assertEq(out.status, 'batal', 'batal, bukan error');
+    r.assertIncludes(out.pesan, 'migrasi', 'menyuruh menjalankan migrasi dulu');
+  });
+
+  r.test('sinkron menambahkan produk yang belum punya baris, sel stok dibiarkan kosong', () => {
+    const { backend, stokSheet } = setupOperator([
+      ['ID Produk', 'PUSAT'],
+      ['1', 50]
+    ]);
+
+    const out = backend.sinkronStokCabang();
+
+    r.assertEq(out.status, 'ok', 'sukses');
+    r.assertEq(out.ditambah, 1, 'hanya produk 2 yang ditambahkan');
+    r.assertEq(stokSheet.getLastRow(), 3, 'header + 2 baris');
+    r.assertEq(stokSheet.getRange(3, 1).getValue(), '2', 'ID produk baru terisi');
+    r.assertEq(stokSheet.getRange(3, 2).getValue(), '', 'stok PUSAT kosong (bukan 0)');
+    r.assertEq(stokSheet.getRange(2, 2).getValue(), 50, 'baris lama tidak diubah');
+  });
+
+  r.test('sinkron idempoten: jalan kedua tidak menambah apa pun', () => {
+    const { backend } = setupOperator([
+      ['ID Produk', 'PUSAT'],
+      ['1', 50]
+    ]);
+
+    backend.sinkronStokCabang();
+    const kedua = backend.sinkronStokCabang();
+
+    r.assertEq(kedua.status, 'ok', 'tetap ok');
+    r.assertEq(kedua.ditambah, 0, 'tidak ada baris baru');
+    r.assertIncludes(kedua.pesan, 'Tidak ada yang ditulis', 'pesan jujur');
+  });
+
+  r.test('sinkron simulasi tidak menulis apa pun', () => {
+    const { backend, stokSheet } = setupOperator([
+      ['ID Produk', 'PUSAT'],
+      ['1', 50]
+    ]);
+
+    const out = backend.sinkronStokCabang(true);
+
+    r.assertEq(out.status, 'simulasi', 'status simulasi');
+    r.assertEq(out.kandidat.length, 1, 'melaporkan kandidat');
+    r.assertEq(stokSheet.getLastRow(), 2, 'sheet tidak bertambah');
+  });
+
+  r.test('rekonsiliasi melaporkan selisih dan produk tanpa baris, tanpa menulis', () => {
+    const { backend, spreadsheet, stokSheet } = setupOperator([
+      ['ID Produk', 'PUSAT', 'CABANG-2'],
+      ['1', 30, 20] // jumlah 50 = Produk.Stok 50 -> cocok
+    ]);
+
+    const sebelum = JSON.stringify(spreadsheet.__produk.__rows());
+    const out = backend.rekonsiliasiStokCabang();
+
+    r.assertEq(out.status, 'ok', 'laporan sukses');
+    r.assertEq(out.jumlahProduk, 2, '2 produk diperiksa');
+    r.assertEq(out.selisih.length, 0, 'produk 1 cocok (30+20=50)');
+    r.assertEq(out.tanpaBaris.join(','), '2', 'produk 2 belum punya baris');
+    r.assertEq(out.totalStokCabang, 50, 'total cabang dihitung dari baris yang ada');
+    r.assertEq(out.totalStokProduk, 80, 'total Produk.Stok 50+30');
+    r.assertEq(JSON.stringify(spreadsheet.__produk.__rows()), sebelum, 'sheet Produk tidak berubah');
+    r.assertEq(stokSheet.getLastRow(), 2, 'sheet Stok_Cabang tidak berubah');
+  });
+
+  r.test('rekonsiliasi: selisih angka dilaporkan, sel kosong tidak dianggap selisih', () => {
+    const { backend } = setupOperator([
+      ['ID Produk', 'PUSAT', 'CABANG-2'],
+      ['1', 10, 5],   // jumlah 15, Produk.Stok 50 -> selisih -35
+      ['2', '', '']   // semua kosong -> belum diisi, bukan selisih
+    ]);
+
+    const out = backend.rekonsiliasiStokCabang();
+
+    r.assertEq(out.selisih.length, 1, 'satu selisih');
+    r.assertEq(out.selisih[0].id, '1', 'produk 1');
+    r.assertEq(out.selisih[0].produk, 50, 'stok produk');
+    r.assertEq(out.selisih[0].cabang, 15, 'jumlah cabang');
+    r.assertEq(out.selisih[0].beda, -35, 'selisih');
+    r.assertEq(out.tanpaBaris.length, 0, 'produk 2 punya baris');
+    r.assertOk(out.selKosong >= 2, 'sel kosong dihitung terpisah');
+  });
+
+});
+
+// ════════════════════════════════════════════════════════════════
+// STOK CABANG UNTUK UI
+// ════════════════════════════════════════════════════════════════
+
+r.suite('Backend — stok cabang untuk tampilan', () => {
+
+  function setupUi(stokCabang) {
+    const s = setupBackend({});
+    if (stokCabang) {
+      const sh = s.spreadsheet.insertSheet('Stok_Cabang');
+      sh.getRange(1, 1, stokCabang.length, stokCabang[0].length).setValues(stokCabang);
+      s.stokSheet = sh;
+    }
+    return s;
+  }
+
+  r.test('getStokCabang mengembalikan hanya sel yang berisi angka', () => {
+    const { backend } = setupUi([
+      ['ID Produk', 'PUSAT', 'CABANG-2'],
+      ['1', 40, 7],
+      ['2', '', 3]
+    ]);
+
+    const out = backend.getStokCabang('CABANG-2');
+
+    r.assertEq(out.status, 'ok', 'sukses');
+    r.assertEq(out.adaSheet, true, 'sheet terdeteksi');
+    r.assertEq(out.adaKolom, true, 'kolom cabang terdeteksi');
+    r.assertEq(out.stok['1'], 7, 'produk 1 = 7');
+    r.assertEq(out.stok['2'], 3, 'produk 2 = 3');
+  });
+
+  r.test('sel kosong TIDAK dikirim sebagai 0 (beda: belum diisi vs habis)', () => {
+    const { backend } = setupUi([
+      ['ID Produk', 'PUSAT'],
+      ['1', ''],
+      ['2', 0]
+    ]);
+
+    const out = backend.getStokCabang('PUSAT');
+
+    r.assertEq(out.stok['2'], 0, 'sel berisi 0 tetap dikirim sebagai 0');
+    r.assertEq(Object.prototype.hasOwnProperty.call(out.stok, '1'), false, 'sel kosong tidak masuk peta');
+  });
+
+  r.test('tanpa cabang / sheet belum ada -> batal dengan pesan jelas', () => {
+    const tanpaSheet = setupUi(null);
+    r.assertEq(tanpaSheet.backend.getStokCabang('PUSAT').status, 'batal', 'sheet belum ada = batal');
+
+    const s = setupUi([['ID Produk', 'PUSAT'], ['1', 5]]);
+    r.assertEq(s.backend.getStokCabang('').status, 'batal', 'tanpa cabang = batal');
+    r.assertEq(s.backend.getStokCabang('CABANG-X').status, 'batal', 'kolom tidak ada = batal');
+  });
+
+  r.test('getInitialData ikut mengirim stokCabang untuk cabang yang diminta', () => {
+    const s = setupUi([
+      ['ID Produk', 'PUSAT', 'CABANG-2'],
+      ['1', 40, 7]
+    ]);
+
+    const out = s.backend.getInitialData(60, 'CABANG-2');
+
+    r.assertOk(out.stokCabang, 'field stokCabang ada');
+    r.assertEq(out.stokCabang.cabang, 'CABANG-2', 'cabang konteks');
+    r.assertEq(out.stokCabang.stok['1'], 7, 'stok cabang terkirim');
+  });
+
+  r.test('sheet belum ada -> payload tetap valid tanpa stokCabang terisi', () => {
+    const { backend } = setupUi(null);
+    const out = backend.getInitialData(60, 'CABANG-2');
+
+    r.assertOk(out.stokCabang, 'objek tetap ada');
+    r.assertEq(out.stokCabang.adaSheet, false, 'adaSheet false');
+    r.assertEq(Object.keys(out.stokCabang.stok).length, 0, 'peta kosong');
+  });
+
+});
+
 r.run('Backend Code.js').then(ok => { process.exit(ok ? 0 : 1); });

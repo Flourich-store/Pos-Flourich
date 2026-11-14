@@ -2092,6 +2092,10 @@
           <svg class="ic" aria-hidden="true"><use href="#icon-user-circle"/></svg>
           <span id="lblUsername">Kasir</span>
         </div>
+        <div class="user-badge" id="cabangBadge" title="Cabang sesi ini">
+          <svg class="ic" aria-hidden="true"><use href="#icon-boxes-stacked"/></svg>
+          <span id="lblCabang">Cabang belum diatur</span>
+        </div>
         <div id="offlineQueueBadge" class="offline-queue-badge hidden" title="Transaksi tersimpan lokal, menunggu koneksi untuk dikirim otomatis">
           <svg class="ic" aria-hidden="true"><use href="#icon-cloud-arrow-up"/></svg>
           <span id="offlineQueueCount">0</span>
@@ -2390,6 +2394,40 @@
 
     function bacaUsernameSesi() {
       try { return String(sessionStorage.getItem('pos_username') || '').trim(); } catch (e) { return ''; }
+    }
+
+    // Badge cabang di header: kasir harus tahu data & stok mana yang dilihatnya.
+    function perbaruiBadgeCabang() {
+      const el = document.getElementById('lblCabang');
+      if (!el) return;
+      const cab = bacaCabangSesi();
+      el.textContent = cab ? ('Cabang ' + cab) : 'Cabang belum diatur';
+      el.title = cab
+        ? ('Data & stok yang tampil: cabang ' + cab)
+        : 'Sesi tanpa cabang: data semua cabang ditampilkan';
+    }
+
+    // Angka stok yang ditampilkan: stok cabang sesi bila sudah diisi, selain itu
+    // stok total. Selalu disertai keterangan sumber supaya tidak tertukar.
+    function stokUntukTampilan(idProduk, stokTotal) {
+      const id = String(idProduk == null ? '' : idProduk).trim();
+      const cab = bacaCabangSesi();
+      const ada = stokCabangSesi && Object.prototype.hasOwnProperty.call(stokCabangSesi, id);
+      if (ada && cab) {
+        const nilai = Number(stokCabangSesi[id]);
+        if (Number.isFinite(nilai)) {
+          return {
+            nilai: nilai,
+            judul: 'Stok cabang ' + cab + ': ' + nilai + ' (total semua cabang ' + stokTotal + ')'
+          };
+        }
+      }
+      return {
+        nilai: Number(stokTotal) || 0,
+        judul: cab
+          ? ('Stok total (stok cabang ' + cab + ' belum diisi): ' + stokTotal)
+          : ('Stok total: ' + stokTotal)
+      };
     }
     const QUEUE_MAKS = 50;      // batas aman agar localStorage tidak membengkak
     const RETRY_MAKS_PER_ITEM = 8; // batas percobaan per item sebelum ditandai gagal permanen
@@ -2718,6 +2756,9 @@
     // masterData adalah alias dari dataProduk (dipakai fungsi addToCart/updateCartQty)
     let masterData = dataProduk;
     let rawPenjualanData = [];
+    // Stok per cabang dari server: { idProduk: angka }. Kosong = sheet/kolom
+    // belum ada, dan UI memakai stok total.
+    let stokCabangSesi = {};
     let filteredPenjualanData = [];
     let logoutTimer = null;
     let realtimeTimer = null;
@@ -3401,12 +3442,16 @@
         const fotoUrl = formatProductImageUrl(rawFoto);
         const safeName = nama.replace(/'/g, "\\'");
 
-        let stokBadgeClass = 'stok-badge badge-high';
-        if (stok <= 0) stokBadgeClass = 'stok-badge badge-low';
-        else if (stok <= 5) stokBadgeClass = 'stok-badge badge-low';
-        else if (stok <= 20) stokBadgeClass = 'stok-badge badge-medium';
+        // Stok cabang bila sudah diisi; kalau belum, stok total (dengan keterangan).
+        const stokInfo = stokUntukTampilan(id, stok);
+        const stokTampil = stokInfo.nilai;
 
-        const stokText = stok <= 0 ? 'Habis' : stok;
+        let stokBadgeClass = 'stok-badge badge-high';
+        if (stokTampil <= 0) stokBadgeClass = 'stok-badge badge-low';
+        else if (stokTampil <= 5) stokBadgeClass = 'stok-badge badge-low';
+        else if (stokTampil <= 20) stokBadgeClass = 'stok-badge badge-medium';
+
+        const stokText = stokTampil <= 0 ? 'Habis' : stokTampil;
 
         const inCart = Array.isArray(cart) ? cart.find(x => String(x.id) === id) : null;
         const inCartQty = inCart ? inCart.jumlah : 0;
@@ -3414,7 +3459,7 @@
           ? `<span class="product-card-cart-count" title="${inCartQty} item di keranjang">✓ ${inCartQty}</span>`
           : '';
 
-        const isOutOfStock = stok <= 0;
+        const isOutOfStock = stokTampil <= 0;
         const actionBtn = isOutOfStock
           ? `<button type="button" class="btn-quick-add" disabled>Habis</button>`
           : `<button type="button" class="btn-quick-add" onclick="event.stopPropagation(); quickAddToCart('${id}', 1)" title="Tambah 1 ke keranjang"><svg class="ic" aria-hidden="true"><use href="#icon-plus"/></svg> Tambah</button>`;
@@ -3529,6 +3574,12 @@
       masterData = data;
       dataProduk = data;
 
+      // Stok per cabang dari server (kosong bila sheet/kolom belum ada).
+      stokCabangSesi = (dataObj.stokCabang && dataObj.stokCabang.stok && typeof dataObj.stokCabang.stok === 'object')
+        ? dataObj.stokCabang.stok
+        : {};
+      perbaruiBadgeCabang();
+
       if (data.length > 1) {
         const sel = document.getElementById('selProduk');
         const tbody = document.querySelector('#stokTable tbody');
@@ -3540,11 +3591,13 @@
           const idProd = String(data[i][0] || '');
           const namaProd = String(data[i][1] || '');
           const stokProd = Number(data[i][2] || 0);
+          const stokInfo = stokUntukTampilan(idProd, stokProd);
+          const stokTampil = stokInfo.nilai;
           const hargaProd = Number(data[i][3] || 0);
           const rawFoto = String(data[i][4] || '').trim();
 
           selHTML += `
-            <option value="${idProd}">${namaProd} - Rp ${hargaProd.toLocaleString('id-ID')} (Stok: ${stokProd})</option>
+            <option value="${idProd}">${namaProd} - Rp ${hargaProd.toLocaleString('id-ID')} (Stok: ${stokTampil})</option>
           `;
 
           const role = sessionStorage.getItem('pos_role');
@@ -3560,8 +3613,8 @@
           }
 
           let stokBadgeClass = 'stok-badge badge-high';
-          if (stokProd <= 5) stokBadgeClass = 'stok-badge badge-low';
-          else if (stokProd <= 20) stokBadgeClass = 'stok-badge badge-medium';
+          if (stokTampil <= 5) stokBadgeClass = 'stok-badge badge-low';
+          else if (stokTampil <= 20) stokBadgeClass = 'stok-badge badge-medium';
 
           const fotoUrl = formatProductImageUrl(rawFoto);
           const safeName = namaProd.replace(/'/g, "\\'");
@@ -3572,7 +3625,7 @@
                 <img src="${fotoUrl}" class="product-thumb" loading="lazy" decoding="async" alt="${safeName}" title="Klik untuk lihat foto ${safeName}" onclick="event.stopPropagation(); previewProductImage('${rawFoto.replace(/'/g, "\\'")}', '${safeName}')" onerror="handleImageError(this, '${rawFoto.replace(/'/g, "\\'")}')">
               </td>
               <td><span class="product-title">${namaProd}</span></td>
-              <td><span class="${stokBadgeClass}">${stokProd}</span></td>
+              <td><span class="${stokBadgeClass}" title="${String(stokInfo.judul).replace(/"/g, '&quot;')}">${stokTampil}</span></td>
               <td><span class="price-text">Rp ${hargaProd.toLocaleString('id-ID')}</span></td>
               <td>${tombolAksi}</td>
             </tr>
@@ -3636,6 +3689,8 @@
       const safeResult = {
         produk: result && Array.isArray(result.produk) ? result.produk : [],
         penjualan: result && Array.isArray(result.penjualan) ? result.penjualan : [],
+        stokCabang: (result && result.stokCabang && typeof result.stokCabang === 'object') ? result.stokCabang : undefined,
+        cabang: (result && result.cabang) || '',
         timestamp: result && result.timestamp ? result.timestamp : new Date().getTime()
       };
       if (!Array.isArray(result && result.produk) || !Array.isArray(result && result.penjualan)) {
@@ -3655,6 +3710,7 @@
     // payload kecil = data awal tampil jauh lebih cepat (dulu 490+ baris penuh).
     document.addEventListener('DOMContentLoaded', function () {
       initProductViewMode();
+      perbaruiBadgeCabang(); // sesi yang dipulihkan harus langsung terlihat cabangnya
       safeGoogleRun('getInitialData', [60, bacaCabangSesi()], result => {
         simpanDanRenderData(result);
       }, err => {
@@ -3702,6 +3758,8 @@
         const safeResult = {
           produk: result && Array.isArray(result.produk) ? result.produk : [],
           penjualan: result && Array.isArray(result.penjualan) ? result.penjualan : [],
+          stokCabang: (result && result.stokCabang && typeof result.stokCabang === 'object') ? result.stokCabang : undefined,
+          cabang: (result && result.cabang) || '',
           timestamp: result && result.timestamp ? result.timestamp : new Date().getTime()
         };
         renderDataPaksa(safeResult);

@@ -178,4 +178,76 @@ function isiKeranjangDanCheckout(app, dom) {
   app.call('checkout');
 }
 
+r.suite('Stok per cabang di UI', () => {
+
+  const PAYLOAD_CABANG = {
+    produk: RESPON_VALID.produk,
+    penjualan: RESPON_VALID.penjualan,
+    stokCabang: { cabang: 'CABANG-2', adaSheet: true, adaKolom: true, stok: { '1': 7 } },
+    cabang: 'CABANG-2',
+    timestamp: 1
+  };
+
+  function muat(payload, cabang) {
+    const dom = createDomStub();
+    const app = loadFrontend(dom, payload);
+    if (cabang !== undefined) dom.sessionStorage.setItem('pos_cabang', cabang);
+    app.call('renderDataPaksa', payload);
+    return { dom, app };
+  }
+
+  r.test('stok cabang dipakai bila sudah diisi, lengkap dengan keterangan sumber', () => {
+    const { app } = muat(PAYLOAD_CABANG, 'CABANG-2');
+
+    const info = app.call('stokUntukTampilan', '1', 50);
+
+    r.assertEq(info.nilai, 7, 'tampil stok cabang 7, bukan total 50');
+    r.assertIncludes(info.judul, 'CABANG-2', 'judul menyebut cabang');
+    r.assertIncludes(info.judul, '50', 'judul tetap menyebut total');
+  });
+
+  r.test('produk tanpa stok cabang -> pakai stok total & keterangannya jujur', () => {
+    const { app } = muat(PAYLOAD_CABANG, 'CABANG-2');
+
+    const info = app.call('stokUntukTampilan', '2', 30);
+
+    r.assertEq(info.nilai, 30, 'jatuh ke stok total');
+    r.assertIncludes(info.judul, 'belum diisi', 'menyatakan stok cabang belum diisi');
+  });
+
+  r.test('sesi tanpa cabang -> stok total tanpa embel-embel cabang', () => {
+    const { app } = muat(PAYLOAD_CABANG, '');
+
+    const info = app.call('stokUntukTampilan', '1', 50);
+
+    r.assertEq(info.nilai, 50, 'pakai total');
+    r.assertIncludes(info.judul, 'Stok total', 'keterangan total');
+  });
+
+  r.test('badge header menampilkan cabang sesi', () => {
+    const { dom } = muat(PAYLOAD_CABANG, 'CABANG-2');
+
+    const el = dom.window.document.getElementById('lblCabang');
+    r.assertOk(el, 'elemen badge ada');
+    r.assertIncludes(el.textContent, 'CABANG-2', 'badge menyebut cabang');
+  });
+
+  r.test('badge memberi tahu bila sesi belum punya cabang', () => {
+    const { dom } = muat(PAYLOAD_CABANG, '');
+
+    const el = dom.window.document.getElementById('lblCabang');
+    r.assertIncludes(el.textContent, 'belum diatur', 'bukan kosong diam-diam');
+  });
+
+  r.test('stokCabang ikut tersimpan di cache lokal', () => {
+    const { dom } = muat(PAYLOAD_CABANG, 'CABANG-2');
+
+    const raw = dom.localStorage.getItem('pos_initial_data');
+    const parsed = JSON.parse(raw);
+    r.assertOk(parsed.stokCabang, 'cache menyimpan stokCabang');
+    r.assertEq(parsed.stokCabang.stok['1'], 7, 'nilai stok cabang tersimpan');
+  });
+
+});
+
 r.run('Stok UI & sinkronisasi (stok manual)').then(ok => { process.exit(ok ? 0 : 1); });
